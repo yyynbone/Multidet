@@ -190,7 +190,7 @@ def iter_extend_axis(x, filter_bool):
             x[i] = iter_extend_axis(a, filter_bool)
         x = tuple(x)
     else:
-        new_x = torch.zeros( (len(filter_bool), *x[0].shape), device=x.device) #, requires_grad=x.requires_grad )
+        new_x = torch.zeros( (len(filter_bool), *x[0].shape), device=x.device, dtype=x.dtype) #, requires_grad=x.requires_grad )
         new_x[filter_bool] = x
         x = new_x
     return x
