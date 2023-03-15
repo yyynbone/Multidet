@@ -1,0 +1,52 @@
+#                 from  n    params  module                                  arguments
+
+# Parameters
+ch_input: 1
+depth_multiple: 0.33  # model depth multiple
+width_multiple: 0.30  # layer channel multiple
+depth_layer: [C3]
+width_layer: [Conv, C3, SPPF, Detect]
+anchors:
+  - [10,13, 16,30, 33,23]  # P3/8
+  - [30,61, 62,45, 59,119]  # P4/16
+  - [116,90, 156,198, 373,326]  # P5/32
+
+# [from,  module, args], args=[ch_in , ch_out, etc]
+backbone:
+  [[-1, Conv, [64, 6, 2, 2]],  # 0-P1/2   #input 256*256 ,out 128
+   [-1, Conv, [64, 128, 3, 2]],  # 1-P2/4 out 64
+   [-1, C3, [128, 128, 3]],
+   [-1, Conv, [128, 256, 3, 2]],  # 3-P3/8  out 32
+   [-1, C3, [256, 256, 6]],
+   [-1, Conv, [256, 512, 3, 2]],  # 5-P4/16 out 16
+   [-1, C3, [512, 512, 9]],
+   [-1, Conv, [512, 1024, 3, 2]],  # 7-P5/32 out 8
+   [-1, C3, [1024, 1024, 3]],
+   [-1, SPPF, [1024, 1024, 5]],  # 9
+  ]
+
+neck:
+  [[-1, Conv, [1024, 512, 1, 1]],
+   [-1, nn.Upsample, [None, 2, 'nearest']], # out 16
+   [[-1, 6], Concat, [1]],  # cat backbone P4
+   [-1, C3, [1066, 512, 3, False]],  # 13  #out 16
+
+   [-1, Conv, [512, 256, 1, 1]],
+   [-1, nn.Upsample, [None, 2, 'nearest']],  #out 32
+   [[-1, 4], Concat, [1]],  # cat backbone P3
+   [-1, C3, [512, 256, 3, False]],  # 17 (P3/8-small)
+
+   [-1, Conv, [256, 256, 3, 2]],
+   [[-1, 14], Concat, [1]],  # cat head P4
+   [-1, C3, [512, 512, 3, False]],  # 20 (P4/16-medium)  #out 16
+
+   [-1, Conv, [512, 512, 3, 2]],
+   [[-1, 10], Concat, [1]],  # cat head P5
+   [-1, C3, [1066, 1024, 3, False]],  # 23 (P5/32-large)  #out 8
+
+  ]
+head:
+  [[[17, 20, 23], Detect, [[256, 512, 1024], nc, anchors]],  # Detect(P3, P4, P5)
+  ]
+
+

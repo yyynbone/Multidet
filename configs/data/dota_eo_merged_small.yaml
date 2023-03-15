@@ -1,0 +1,21 @@
+
+# Example usage: python train.py --data configs/data/xxx.yaml
+# parent
+# ├── path
+# └── images
+#   └── mode
+# └── labels
+#   └── mode
+#   └── mode.txt
+
+
+# Train/val/test sets as 1) dir: path/to/imgs, 2) file: path/to/imgs.txt, or 3) list: [path/to/imgs1, path/to/imgs2, ..]
+path: ../data/essential/eo/aug_merged_of_iou68_1024_576_dota  # dataset root dir
+train: labels/small_train.txt  # train images (relative to 'path') 118287 images
+val: labels/small_val.txt  # train images (relative to 'path') 5000 images
+
+#  Classes
+nc: 8  # number of classes
+names: ['vehicle', 'bridge', 'ship','airport', 'harbor', 'airplane', 'helipad', 'helicopter']
+
+

@@ -1,0 +1,104 @@
+#                 from  n    params  module                                  arguments
+#  0                -1      3520  models.layers.common_layer.Conv         [3, 32, 6, 2, 2]
+#  1                -1     18560  models.layers.common_layer.Conv         [32, 64, 3, 2]
+#  2                -1     18816  models.layers.yolo_layer.C3             [64, 64, 1]
+#  3                -1     73984  models.layers.common_layer.Conv         [64, 128, 3, 2]
+#  4                -1    115712  models.layers.yolo_layer.C3             [128, 128, 2]
+#  5                -1    295424  models.layers.common_layer.Conv         [128, 256, 3, 2]
+#  6                -1    625152  models.layers.yolo_layer.C3             [256, 256, 3]
+#  7                -1   1180672  models.layers.common_layer.Conv         [256, 512, 3, 2]
+#  8                -1   1182720  models.layers.yolo_layer.C3             [512, 512, 1]
+#  9                -1    656896  models.layers.yolo_layer.SPPF           [512, 512, 5]
+# 10                -1    131584  models.layers.common_layer.Conv         [512, 256, 1, 1]
+# 11                -1         0  torch.nn.modules.upsampling.Upsample    [None, 2, 'nearest']
+# 12           [-1, 6]         0  models.layers.common_layer.Concat       [1]
+# 13                -1    361984  models.layers.yolo_layer.C3             [512, 256, 1, False]
+# 14                -1     33024  models.layers.common_layer.Conv         [256, 128, 1, 1]
+# 15                -1         0  torch.nn.modules.upsampling.Upsample    [None, 2, 'nearest']
+# 16           [-1, 4]         0  models.layers.common_layer.Concat       [1]
+# 17                -1     90880  models.layers.yolo_layer.C3             [256, 128, 1, False]
+# 18                -1    147712  models.layers.common_layer.Conv         [128, 128, 3, 2]
+# 19          [-1, 14]         0  models.layers.common_layer.Concat       [1]
+# 20                -1    296448  models.layers.yolo_layer.C3             [256, 256, 1, False]
+# 21                -1    590336  models.layers.common_layer.Conv         [256, 256, 3, 2]
+# 22          [-1, 10]         0  models.layers.common_layer.Concat       [1]
+# 23                -1   1182720  models.layers.yolo_layer.C3             [512, 512, 1, False]
+# 24      [17, 20, 23]    229245  models.head.Detect                      [[128, 256, 512], 80, [[10, 13, 16, 30, 33, 23], [30, 61, 62, 45, 59, 119], [116, 90, 156, 198, 373, 326]]]
+#Model Summary: 270layers, 7235389 parameters, 7235389 gradients,image size is 640, 16.6 GFLOPs in cpu
+# time (ms)     GFLOPs     params                                    module                       input_size
+#     21.79     5.8720       3520  models.layers.common_layer.Conv           torch.Size([8, 3, 640, 640])
+#      9.95     7.6546      18560  models.layers.common_layer.Conv           torch.Size([8, 32, 320, 320])
+#      3.10     7.8643      18816  models.layers.yolo_layer.C3               torch.Size([8, 64, 160, 160])
+#      0.60     7.6022      73984  models.layers.common_layer.Conv           torch.Size([8, 64, 160, 160])
+#      2.65    11.9538     115712  models.layers.yolo_layer.C3               torch.Size([8, 128, 80, 80])
+#      0.50     7.5760     295424  models.layers.common_layer.Conv           torch.Size([8, 128, 80, 80])
+#      2.20    16.0694     625152  models.layers.yolo_layer.C3               torch.Size([8, 256, 40, 40])
+#      0.40     7.5629    1180672  models.layers.common_layer.Conv           torch.Size([8, 256, 40, 40])
+#      1.20     7.5891    1182720  models.layers.yolo_layer.C3               torch.Size([8, 512, 20, 20])
+#      0.60     4.2140     656896  models.layers.yolo_layer.SPPF             torch.Size([8, 512, 20, 20])
+#      0.20     0.8454     131584  models.layers.common_layer.Conv           torch.Size([8, 512, 20, 20])
+#      0.00     0.0066          0  torch.nn.modules.upsampling.Upsample      torch.Size([8, 256, 20, 20])
+#      0.10     0.0000          0  models.layers.common_layer.Concat         [torch.Size([8, 256, 40, 40]), torch.Size([8, 256, 40, 40])]
+#      1.30     9.3061     361984  models.layers.yolo_layer.C3               torch.Size([8, 512, 40, 40])
+#      0.25     0.8520      33024  models.layers.common_layer.Conv           torch.Size([8, 256, 40, 40])
+#      0.10     0.0131          0  torch.nn.modules.upsampling.Upsample      torch.Size([8, 128, 40, 40])
+#      0.20     0.0000          0  models.layers.common_layer.Concat         [torch.Size([8, 128, 80, 80]), torch.Size([8, 128, 80, 80])]
+#      1.80     9.3848      90880  models.layers.yolo_layer.C3               torch.Size([8, 256, 80, 80])
+#      0.30     3.7880     147712  models.layers.common_layer.Conv           torch.Size([8, 128, 80, 80])
+#      0.00     0.0000          0  models.layers.common_layer.Concat         [torch.Size([8, 128, 40, 40]), torch.Size([8, 128, 40, 40])]
+#      1.10     7.6284     296448  models.layers.yolo_layer.C3               torch.Size([8, 256, 40, 40])
+#      0.30     3.7814     590336  models.layers.common_layer.Conv           torch.Size([8, 256, 40, 40])
+#      0.00     0.0000          0  models.layers.common_layer.Concat         [torch.Size([8, 256, 20, 20]), torch.Size([8, 256, 20, 20])]
+#      1.30     7.5891    1182720  models.layers.yolo_layer.C3               torch.Size([8, 512, 20, 20])
+#      0.80     5.8491     229245  models.head.Detect                        [torch.Size([8, 128, 80, 80]), torch.Size([8, 256, 40, 40]), torch.Size([8, 512, 20, 20])]
+#     50.75   133.0020    7235389  Total
+# Parameters
+depth_multiple: 0.33  # model depth multiple
+width_multiple: 0.50  # layer channel multiple
+depth_layer: [C3]
+width_layer: [Conv, C3, SPPF, Detect]
+anchors:
+  - [10,13, 16,30, 33,23]  # P3/8
+  - [30,61, 62,45, 59,119]  # P4/16
+  - [116,90, 156,198, 373,326]  # P5/32
+
+# YOLOv5 v6.0 backbone
+backbone:
+
+  [[-1, Conv, [64, 6, 2, 2]],  # 0-P1/2   #input 256*256 ,out 128
+   [-1, Conv, [64, 128, 3, 2]],  # 1-P2/4 out 64
+   [-1, C3, [128, 128, 3]],
+   [-1, Conv, [128, 256, 3, 2]],  # 3-P3/8  out 32
+   [-1, C3, [256, 256, 6]],
+   [-1, Conv, [256, 512, 3, 2]],  # 5-P4/16 out 16
+   [-1, C3, [512, 512, 9]],
+   [-1, Conv, [512, 1024, 3, 2]],  # 7-P5/32 out 8
+   [-1, C3, [1024, 1024, 3]],
+   [-1, SPPF, [1024, 1024, 5]],  # 9
+  ]
+
+# YOLOv5 v6.0
+neck:
+  [[-1, Conv, [1024, 512, 1, 1]],
+   [-1, nn.Upsample, [None, 2, 'nearest']], # out 16
+   [[-1, 6], Concat, [1]],  # cat backbone P4
+   [-1, C3, [1024, 512, 3, False]],  # 13  #out 16
+
+   [-1, Conv, [512, 256, 1, 1]],
+   [-1, nn.Upsample, [None, 2, 'nearest']],  #out 32
+   [[-1, 4], Concat, [1]],  # cat backbone P3
+   [-1, C3, [512, 256, 3, False]],  # 17 (P3/8-small)
+
+   [-1, Conv, [256, 256, 3, 2]],
+   [[-1, 14], Concat, [1]],  # cat head P4
+   [-1, C3, [512, 512, 3, False]],  # 20 (P4/16-medium)  #out 16
+
+   [-1, Conv, [512, 512, 3, 2]],
+   [[-1, 10], Concat, [1]],  # cat head P5
+   [-1, C3, [1024, 1024, 3, False]],  # 23 (P5/32-large)  #out 8
+
+  ]
+head:
+  [[[17, 20, 23], Detect, [[256, 512, 1024], nc, anchors]],  # Detect(P3, P4, P5)
+  ]
+
