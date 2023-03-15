@@ -155,8 +155,12 @@ def binary_cross_entropy(pred,
             class_weight,
             pos_weight=pos_weight,
             reduction='none')
-    loss = 2 * loss/(1+pos_weight)
-    loss = reduce_loss(loss, reduction)
+    # # if this, when pos_weight gain, although the same pred, but loss decrease, so we modifed
+    # loss = 2 * loss/(1+pos_weight)
+    # loss = reduce_loss(loss, reduction)
+    # ft_num = label.shape[0] - label.sum()
+    # tt_num = label.sum()
+    loss /=(label.shape[0] + (pos_weight-1)*label.sum())
     return loss
 class CrossEntropyLoss(nn.Module):
     def __init__(self,

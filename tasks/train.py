@@ -497,9 +497,17 @@ def train(hyp, opt, logger, device, Local_rank=-1, Node=-1, World_size=1):
 
                 # change callbacks keys
                 if i==0  and Node in [-1, 0] and Local_rank in [-1, 0]:
-                    if isinstance(loss, (tuple,list)):
+                    # if isinstance(loss, (tuple,list)):
+                    if loss_num == 3:
                         logger.info(
                             ('\n' + '%10s' * 7) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'labels', 'img_size'))
+                    elif loss_num == 4:
+                        logger.info(
+                            ('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'seg', 'labels', 'img_size'))
+                        callbacks.keys = ['train/box_loss', 'train/obj_loss', 'train/cls_loss', 'train/seg_loss'  # train loss
+                     'metrics/precision', 'metrics/recall', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',  # metrics
+                     'val/box_loss', 'val/obj_loss', 'val/cls_loss',  'val/seg_loss'# val loss
+                     'x/lr0', 'x/lr1', 'x/lr2']  # params
                     else:
                         callbacks.keys = ['train/cls_loss',  # train loss
                                           'metrics/precision', 'metrics/recall', 'metrics/mAP_0.5',

@@ -1,15 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="2efdf6e0-e5e2-446a-aca0-d0a10c6e9fe1" name="Default Changelist" comment="build">
-      <change afterPath="$PROJECT_DIR$/tasks/convert_cat_filter.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/deployment.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/deployment.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/vcs.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
+    <list default="true" id="2efdf6e0-e5e2-446a-aca0-d0a10c6e9fe1" name="Default Changelist" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/configs/model/zjdet_cat_filter_detect.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/configs/model/zjdet_cat_filter_detect.yaml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/loss/basic_loss.py" beforeDir="false" afterPath="$PROJECT_DIR$/loss/basic_loss.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/models/model.py" beforeDir="false" afterPath="$PROJECT_DIR$/models/model.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tasks/convert.py" beforeDir="false" afterPath="$PROJECT_DIR$/tasks/convert.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tasks/train.py" beforeDir="false" afterPath="$PROJECT_DIR$/tasks/train.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/utils/callback.py" beforeDir="false" afterPath="$PROJECT_DIR$/utils/callback.py" afterDir="false" />
     </list>
     <ignored path="checkpoints/" />
     <ignored path="results/" />
@@ -51,50 +49,7 @@
                 </provider>
               </entry>
             </file>
-            <file pinned="false" current-in-tab="false">
-              <entry file="file://$PROJECT_DIR$/loss/loss.py">
-                <provider selected="true" editor-type-id="text-editor">
-                  <state relative-caret-position="704">
-                    <caret line="273" column="51" selection-start-line="273" selection-start-column="51" selection-end-line="273" selection-end-column="51" />
-                    <folding>
-                      <element signature="e#298#5923#0" />
-                      <element signature="e#385#2312#0" />
-                      <element signature="e#557#574#0" />
-                      <element signature="e#850#979#0" />
-                      <element signature="e#1090#2312#0" />
-                      <element signature="e#1631#1746#0" />
-                      <element signature="e#2356#5923#0" />
-                      <element signature="e#2722#5800#0" />
-                      <element signature="e#2937#5452#0" />
-                      <element signature="e#3170#4855#0" />
-                      <element signature="e#3840#3993#0" />
-                      <element signature="e#4186#4855#0" />
-                      <element signature="e#4234#4700#0" />
-                      <element signature="e#4451#4536#0" />
-                      <element signature="e#5958#7484#0" />
-                      <element signature="e#6010#6090#0" />
-                      <element signature="e#6220#6890#0" />
-                      <element signature="e#6539#6779#0" />
-                      <element signature="e#6955#7484#0" />
-                      <element signature="e#6955#6996#0" />
-                      <element signature="e#7553#11963#0" />
-                      <element signature="e#7664#8490#0" />
-                      <element signature="e#8504#9062#0" />
-                      <element signature="e#8624#9043#0" />
-                      <element signature="e#8845#8971#0" />
-                      <element signature="e#9125#9631#0" />
-                      <element signature="e#9154#9568#0" />
-                      <element signature="e#9327#9438#0" />
-                      <element signature="e#9681#11963#0" />
-                      <element signature="e#10472#10481#0" />
-                      <element signature="e#11283#11293#0" />
-                      <element signature="e#11565#11743#0" />
-                    </folding>
-                  </state>
-                </provider>
-              </entry>
-            </file>
-            <file pinned="false" current-in-tab="false">
+            <file pinned="false" current-in-tab="true">
               <entry file="file://$PROJECT_DIR$/tasks/val.py">
                 <provider selected="true" editor-type-id="text-editor">
                   <state relative-caret-position="548">
@@ -110,29 +65,6 @@
                 </provider>
               </entry>
             </file>
-            <file pinned="false" current-in-tab="false">
-              <entry file="file://$PROJECT_DIR$/configs/model/zjdet_cat_filter_detect.yaml">
-                <provider selected="true" editor-type-id="text-editor">
-                  <state relative-caret-position="553">
-                    <caret line="98" column="17" selection-start-line="98" selection-start-column="13" selection-end-line="98" selection-end-column="17" />
-                  </state>
-                </provider>
-              </entry>
-            </file>
-            <file pinned="false" current-in-tab="false">
-              <entry file="file://$PROJECT_DIR$/configs/model/zjdet_neck_small.yaml">
-                <provider selected="true" editor-type-id="text-editor">
-                  <state relative-caret-position="679">
-                    <caret line="66" column="42" selection-start-line="66" selection-start-column="42" selection-end-line="66" selection-end-column="42" />
-                  </state>
-                </provider>
-              </entry>
-            </file>
-            <file pinned="true" current-in-tab="true">
-              <entry file="remoteDeploymentFS://&lt;6462fac6-fe39-4676-abff-41daa06ab562&gt;/results/train/merge_scls/c3_classify_s/exp8/results.png">
-                <provider selected="true" editor-type-id="images" />
-              </entry>
-            </file>
           </leaf>
         </state>
       </content>
@@ -140,11 +72,11 @@
   </component>
   <component name="FileEditorManager">
     <leaf SIDE_TABS_SIZE_LIMIT_KEY="375">
-      <file pinned="false" current-in-tab="false">
+      <file pinned="false" current-in-tab="true">
         <entry file="file://$PROJECT_DIR$/tasks/train.py">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="516">
-              <caret line="195" column="9" selection-start-line="195" selection-start-column="9" selection-end-line="195" selection-end-column="9" />
+            <state relative-caret-position="98">
+              <caret line="509" column="57" lean-forward="true" selection-start-line="509" selection-start-column="57" selection-end-line="509" selection-end-column="57" />
               <folding>
                 <element signature="e#0#15#0" expanded="true" />
               </folding>
@@ -153,64 +85,26 @@
         </entry>
       </file>
       <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/models/head.py">
+        <entry file="file://$PROJECT_DIR$/loss/loss.py">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="363">
-              <caret line="42" selection-start-line="42" selection-end-line="42" />
+            <state relative-caret-position="142">
+              <caret line="266" column="51" lean-forward="true" selection-start-line="266" selection-start-column="51" selection-end-line="266" selection-end-column="51" />
               <folding>
-                <element signature="e#2063#2857#0" />
-                <element signature="e#2135#2796#0" />
-                <element signature="e#2406#2796#0" />
-                <element signature="e#2912#3521#0" />
-                <element signature="e#3622#4189#0" />
-                <element signature="e#3622#3668#0" />
-                <element signature="e#3858#4189#0" />
-                <element signature="e#4239#4603#0" />
-                <element signature="e#4294#4543#0" />
-                <element signature="e#4579#4603#0" />
-                <element signature="e#4637#5000#0" />
-                <element signature="e#4692#4940#0" />
-                <element signature="e#4976#5000#0" />
-                <element signature="e#5032#9913#0" />
-                <element signature="e#5254#6025#0" />
-                <element signature="e#6061#7018#0" />
-                <element signature="e#6210#6907#0" />
-                <element signature="e#6526#6907#0" />
-                <element signature="e#7058#8615#0" />
-                <element signature="e#7207#8288#0" />
-                <element signature="e#7475#8288#0" />
-                <element signature="e#7708#7869#0" />
-                <element signature="e#7912#8238#0" />
-                <element signature="e#8440#8482#0" />
-                <element signature="e#8645#9281#0" />
-                <element signature="e#8757#9019#0" />
-                <element signature="e#9111#9281#0" />
-                <element signature="e#9343#9476#0" />
-                <element signature="e#9512#9913#0" />
-                <element signature="e#9958#10609#0" />
-                <element signature="e#10128#10358#0" />
-                <element signature="e#10394#10609#0" />
-                <element signature="e#10646#13198#0" />
-                <element signature="e#10928#11713#0" />
-                <element signature="e#11749#12592#0" />
-                <element signature="e#11990#12112#0" />
-                <element signature="e#12339#12364#0" />
-                <element signature="e#12627#13198#0" />
-                <element signature="e#12757#12858#0" />
-                <element signature="e#13052#13198#0" />
-                <element signature="e#13238#13861#0" />
-                <element signature="e#13411#13696#0" />
-                <element signature="e#13732#13861#0" />
-                <element signature="e#14492#14703#0" />
-                <element signature="e#14529#14703#0" />
-                <element signature="e#14574#14703#0" />
-                <element signature="e#14738#14997#0" />
-                <element signature="e#15027#15504#0" />
-                <element signature="e#15173#15415#0" />
-                <element signature="e#15451#15504#0" />
-                <element signature="e#15539#16428#0" />
-                <element signature="e#15647#16013#0" />
-                <element signature="e#16049#16428#0" />
+                <element signature="e#557#574#0" />
+                <element signature="e#850#979#0" />
+                <element signature="e#1631#1746#0" />
+              </folding>
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/utils/mix_utils.py">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="248">
+              <caret line="192" column="72" lean-forward="true" selection-start-line="192" selection-start-column="72" selection-end-line="192" selection-end-column="72" />
+              <folding>
+                <element signature="e#0#10#0" expanded="true" />
               </folding>
             </state>
           </provider>
@@ -219,29 +113,17 @@
       <file pinned="false" current-in-tab="false">
         <entry file="file://$PROJECT_DIR$/models/model.py">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="556">
-              <caret line="375" column="57" selection-start-line="375" selection-start-column="57" selection-end-line="375" selection-end-column="57" />
+            <state relative-caret-position="147">
+              <caret line="250" column="104" selection-start-line="250" selection-start-column="104" selection-end-line="250" selection-end-column="104" />
             </state>
           </provider>
         </entry>
       </file>
       <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/tasks/convert_cat_filter.py">
+        <entry file="file://$PROJECT_DIR$/utils/callback.py">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="172">
-              <caret line="36" selection-start-line="36" selection-end-line="36" />
-              <folding>
-                <element signature="e#0#46#0" expanded="true" />
-              </folding>
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file pinned="true" current-in-tab="true">
-        <entry file="remoteDeploymentFS://&lt;6462fac6-fe39-4676-abff-41daa06ab562&gt;/results/train/merge_scls/c3_classify_s/exp8/train.log">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="317">
-              <caret line="2007" column="75" lean-forward="true" selection-start-line="2007" selection-start-column="75" selection-end-line="2007" selection-end-column="75" />
+            <state relative-caret-position="250">
+              <caret line="16" column="20" lean-forward="true" selection-start-line="16" selection-start-column="20" selection-end-line="19" selection-end-column="57" />
             </state>
           </provider>
         </entry>
@@ -257,8 +139,6 @@
   </component>
   <component name="FindInProjectRecents">
     <findStrings>
-      <find>1028</find>
-      <find>1029</find>
       <find>1030</find>
       <find>1031</find>
       <find>best e</find>
@@ -280,13 +160,15 @@
       <find>label_pos</find>
       <find>freeze</find>
       <find>filter_bool</find>
-      <find>need_stride</find>
       <find>info</find>
       <find>best pr</find>
       <find>best</find>
       <find>best pre</find>
-      <find>model.freeze</find>
       <find>best</find>
+      <find>need_stride</find>
+      <find>cls_out</find>
+      <find>model.freeze</find>
+      <find>if isinstance(loss, (tuple,list))</find>
     </findStrings>
     <replaceStrings>
       <replace>layers.Conv</replace>
@@ -326,7 +208,6 @@
         <option value="$PROJECT_DIR$/models/layers/__init__.py" />
         <option value="$PROJECT_DIR$/../mmclassification/mmcls/models/backbones/squeezenet_hzh.py" />
         <option value="$PROJECT_DIR$/configs/model/squeezenet.yaml" />
-        <option value="$PROJECT_DIR$/utils/callback.py" />
         <option value="$PROJECT_DIR$/results/val/merge/yolov8s_exp_best/exp/val.log" />
         <option value="$PROJECT_DIR$/configs/data/merge_bg.yaml" />
         <option value="$PROJECT_DIR$/dataloader/Loader.py" />
@@ -354,19 +235,20 @@
         <option value="$PROJECT_DIR$/utils/plots.py" />
         <option value="$PROJECT_DIR$/configs/model/c3_classify_s.yaml" />
         <option value="$PROJECT_DIR$/utils/lr_schedule.py" />
-        <option value="$PROJECT_DIR$/loss/basic_loss.py" />
         <option value="$PROJECT_DIR$/tasks/val.py" />
         <option value="$PROJECT_DIR$/configs/hyp/hyp.yaml" />
         <option value="$PROJECT_DIR$/loss/loss.py" />
-        <option value="$PROJECT_DIR$/utils/mix_utils.py" />
         <option value="$PROJECT_DIR$/tasks/visual_tools/debug.py" />
         <option value="$PROJECT_DIR$/tasks/visual_tools/compare_freeze_dict.py" />
-        <option value="$PROJECT_DIR$/tasks/train.py" />
         <option value="$PROJECT_DIR$/configs/hyp/hyp_quick_pos.yaml" />
-        <option value="$PROJECT_DIR$/configs/model/zjdet_cat_filter_detect.yaml" />
-        <option value="$PROJECT_DIR$/models/model.py" />
         <option value="$PROJECT_DIR$/tasks/convert.py" />
         <option value="$PROJECT_DIR$/tasks/convert_cat_filter.py" />
+        <option value="$PROJECT_DIR$/loss/basic_loss.py" />
+        <option value="$PROJECT_DIR$/configs/model/zjdet_cat_filter_detect.yaml" />
+        <option value="$PROJECT_DIR$/utils/mix_utils.py" />
+        <option value="$PROJECT_DIR$/models/model.py" />
+        <option value="$PROJECT_DIR$/utils/callback.py" />
+        <option value="$PROJECT_DIR$/tasks/train.py" />
       </list>
     </option>
   </component>
@@ -405,6 +287,11 @@
               <item name="zjdet" type="462c0819:PsiDirectoryNode" />
               <item name="configs" type="462c0819:PsiDirectoryNode" />
               <item name="model" type="462c0819:PsiDirectoryNode" />
+            </path>
+            <path>
+              <item name="zjdet" type="b2602c69:ProjectViewProjectNode" />
+              <item name="zjdet" type="462c0819:PsiDirectoryNode" />
+              <item name="loss" type="462c0819:PsiDirectoryNode" />
             </path>
             <path>
               <item name="zjdet" type="b2602c69:ProjectViewProjectNode" />
@@ -501,7 +388,7 @@
       </list>
     </option>
   </component>
-  <component name="RunManager" selected="Python.val_single_cat_filter">
+  <component name="RunManager" selected="Python.train_c_cat_filter">
     <configuration name="compare_freeze_dict" type="PythonConfigurationType" factoryName="Python" temporary="true">
       <module name="zjdet" />
       <option name="INTERPRETER_OPTIONS" value="" />
@@ -804,6 +691,28 @@
       <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
       <option name="SCRIPT_NAME" value="$PROJECT_DIR$/tasks/train.py" />
       <option name="PARAMETERS" value="--cfg configs/model/c3_classify_s.yaml --data merge_scls.yaml --hyp hyp_quick_pos.yaml --epoch 500 --batch-size 256 --world-size 4 --imgsz 800 --bgr 0 --last-conf 0.6 --div-area 25 50 --patience 500 --loss-supervision 50 --loss ClassifyLoss --weights results/train/merge_scls/c3_classify_s/exp/weights/best_precision.pt --port 23500" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <configuration name="train_c_cat_filter" type="PythonConfigurationType" factoryName="Python">
+      <module name="zjdet" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="sftp://root@10.101.29.10:22/home/huawei/anaconda3/envs/pytorch/bin/python3" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+      <option name="IS_MODULE_SDK" value="false" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/tasks/train.py" />
+      <option name="PARAMETERS" value="--cfg configs/model/zjdet_cat_filter_detect.yaml --data merge_scls.yaml --epoch 500 --batch-size 256 --world-size 8 --imgsz 800 --bgr 0 --last-conf 0.4 --div-area 25 50 --patience 500 --loss-supervision 50 --weights checkpoints/zjdet_cat_filter_detect.pt --freeze 9" />
       <option name="SHOW_COMMAND_LINE" value="false" />
       <option name="EMULATE_TERMINAL" value="false" />
       <option name="MODULE_MODE" value="false" />
@@ -1116,6 +1025,7 @@
       <item itemvalue="Python.train_c_s" />
       <item itemvalue="Python.train_c_C3" />
       <item itemvalue="Python.train_c" />
+      <item itemvalue="Python.train_c_cat_filter" />
       <item itemvalue="Python.train_c_local" />
       <item itemvalue="Python.detect_c" />
       <item itemvalue="Python.model" />
@@ -1160,7 +1070,7 @@
       <workItem from="1675307071877" duration="89510000" />
       <workItem from="1676252037248" duration="44600000" />
       <workItem from="1676440730648" duration="221816000" />
-      <workItem from="1678671016205" duration="66816000" />
+      <workItem from="1678671016205" duration="71237000" />
     </task>
     <task id="LOCAL-00001" summary="build">
       <created>1678850740948</created>
@@ -1169,11 +1079,25 @@
       <option name="project" value="LOCAL" />
       <updated>1678850740948</updated>
     </task>
-    <option name="localTasksCounter" value="2" />
+    <task id="LOCAL-00002" summary="add cat filter and convert pre model">
+      <created>1678872949059</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1678872949059</updated>
+    </task>
+    <task id="LOCAL-00003" summary="modify iter_extend_axis error of dtype of new_x and x">
+      <created>1678874779908</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1678874779908</updated>
+    </task>
+    <option name="localTasksCounter" value="4" />
     <servers />
   </component>
   <component name="TimeTrackingManager">
-    <option name="totallyTimeSpent" value="729829000" />
+    <option name="totallyTimeSpent" value="734250000" />
   </component>
   <component name="TodoView" selected-index="3">
     <todo-panel id="selected-file">
@@ -1188,27 +1112,27 @@
     <frame x="-7" y="-7" width="2062" height="1118" extended-state="6" />
     <editor active="true" />
     <layout>
-      <window_info content_ui="combo" id="Project" order="0" visible="true" weight="0.23353294" />
+      <window_info content_ui="combo" id="Project" order="0" visible="true" weight="0.19061877" />
       <window_info id="Structure" order="1" side_tool="true" weight="0.25" />
       <window_info id="Favorites" order="2" side_tool="true" />
       <window_info anchor="bottom" id="Message" order="0" />
       <window_info anchor="bottom" id="Find" order="1" sideWeight="0.75025076" weight="0.40520832" />
-      <window_info anchor="bottom" id="Run" order="2" sideWeight="0.79291415" visible="true" weight="0.36206895" />
+      <window_info active="true" anchor="bottom" id="Run" order="2" sideWeight="0.79241514" visible="true" weight="0.4929006" />
       <window_info anchor="bottom" id="Debug" order="3" sideWeight="0.755988" weight="0.40365112" />
       <window_info anchor="bottom" id="Cvs" order="4" weight="0.25" />
       <window_info anchor="bottom" id="Inspection" order="5" weight="0.4" />
       <window_info anchor="bottom" id="TODO" order="6" sideWeight="0.498503" weight="0.3296146" />
       <window_info anchor="bottom" id="Docker" order="7" show_stripe_button="false" />
-      <window_info anchor="bottom" id="Version Control" order="8" sideWeight="0.68812376" weight="0.09330629" />
+      <window_info anchor="bottom" id="Version Control" order="8" sideWeight="0.68762475" weight="0.09330629" />
       <window_info anchor="bottom" id="Database Changes" order="9" />
-      <window_info anchor="bottom" id="File Transfer" order="10" sideWeight="0.20708583" side_tool="true" visible="true" weight="0.36206895" />
+      <window_info anchor="bottom" id="File Transfer" order="10" sideWeight="0.20758483" side_tool="true" visible="true" weight="0.4929006" />
       <window_info anchor="bottom" id="Event Log" order="11" sideWeight="0.20558882" side_tool="true" weight="0.07606491" />
       <window_info anchor="bottom" id="Terminal" order="12" sideWeight="0.7326981" weight="0.446875" />
       <window_info anchor="bottom" id="Python Console" order="13" sideWeight="0.4995005" weight="0.32960325" />
       <window_info anchor="right" id="Commander" internal_type="SLIDING" order="0" type="SLIDING" weight="0.4" />
       <window_info anchor="right" id="Ant Build" order="1" weight="0.25" />
       <window_info anchor="right" content_ui="combo" id="Hierarchy" order="2" weight="0.25" />
-      <window_info active="true" anchor="right" id="Remote Host" order="3" visible="true" weight="0.16467066" />
+      <window_info anchor="right" id="Remote Host" order="3" visible="true" weight="0.252994" />
       <window_info anchor="right" id="SciView" order="4" weight="0.2567703" />
       <window_info anchor="right" id="Database" order="5" weight="0.32996973" />
     </layout>
@@ -1246,7 +1170,9 @@
       <path value="$PROJECT_DIR$/.." />
     </ignored-roots>
     <MESSAGE value="build" />
-    <option name="LAST_COMMIT_MESSAGE" value="build" />
+    <MESSAGE value="add cat filter and convert pre model" />
+    <MESSAGE value="modify iter_extend_axis error of dtype of new_x and x" />
+    <option name="LAST_COMMIT_MESSAGE" value="modify iter_extend_axis error of dtype of new_x and x" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
@@ -1274,6 +1200,7 @@
     <SUITE FILE_PATH="coverage/zjdet$detect_v7.coverage" NAME="detect_v7 Coverage Results" MODIFIED="1676864065751" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/zjdet$conpare_select.coverage" NAME="conpare_select Coverage Results" MODIFIED="1675646989432" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/zjdet$yolov7_detect.coverage" NAME="yolov7_detect Coverage Results" MODIFIED="1676344858516" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/zjdet$train_c_cat_filter.coverage" NAME="train_c_cat_filter Coverage Results" MODIFIED="1678877074011" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/zjdet$val_single_cls.coverage" NAME="val_single_cls Coverage Results" MODIFIED="1678775918713" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/zjdet$convert.coverage" NAME="convert Coverage Results" MODIFIED="1678352211203" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/tasks" />
     <SUITE FILE_PATH="coverage/zjdet$val_single_filter.coverage" NAME="val_single_filter Coverage Results" MODIFIED="1678867002358" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
@@ -1300,82 +1227,6 @@
     <SUITE FILE_PATH="coverage/zjdet$yolov8_model.coverage" NAME="yolov8_model Coverage Results" MODIFIED="1676537571981" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
   </component>
   <component name="editorHistoryManager">
-    <entry file="file://$PROJECT_DIR$/utils/calculate.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="185">
-          <caret line="462" selection-start-line="462" selection-end-line="462" />
-          <folding>
-            <element signature="e#0#12#0" expanded="true" />
-            <element signature="e#306#2431#0" />
-            <element signature="e#477#612#0" />
-            <element signature="e#662#925#0" />
-            <element signature="e#1321#2395#0" />
-            <element signature="e#1597#2227#0" />
-            <element signature="e#1994#2227#0" />
-            <element signature="e#2299#2395#0" />
-            <element signature="e#2462#3321#0" />
-            <element signature="e#2539#2894#1" />
-            <element signature="e#2927#2991#0" />
-            <element signature="e#3363#4103#0" />
-            <element signature="e#3363#3564#1" />
-            <element signature="e#4134#4925#0" />
-            <element signature="e#4134#4492#1" />
-            <element signature="e#4525#4589#0" />
-            <element signature="e#4928#4973#0" />
-            <element signature="e#8536#9783#0" />
-            <element signature="e#8536#8757#1" />
-            <element signature="e#9065#9095#0" />
-            <element signature="e#9814#9971#0" />
-            <element signature="e#10038#12803#0" />
-            <element signature="e#10038#10331#1" />
-            <element signature="e#10406#10559#0" />
-            <element signature="e#11014#11560#0" />
-            <element signature="e#11167#11434#0" />
-            <element signature="e#11613#12765#0" />
-            <element signature="e#11814#12371#0" />
-            <element signature="e#12380#12493#0" />
-            <element signature="e#12825#13136#0" />
-            <element signature="e#12935#13056#0" />
-            <element signature="e#13075#13136#0" />
-            <element signature="e#13268#13634#1" />
-            <element signature="e#13802#13823#0" />
-            <element signature="e#16509#17477#0" />
-            <element signature="e#16509#16765#1" />
-            <element signature="e#17141#17258#0" />
-            <element signature="e#17293#17450#0" />
-            <element signature="e#17506#20073#0" />
-            <element signature="e#17652#17794#0" />
-            <element signature="e#17853#19501#0" />
-            <element signature="e#17853#18220#1" />
-            <element signature="e#18515#18926#0" />
-            <element signature="e#18649#18926#0" />
-            <element signature="e#19127#19327#0" />
-            <element signature="e#19355#19501#0" />
-            <element signature="e#19414#19501#0" />
-            <element signature="e#19533#19551#0" />
-            <element signature="e#19582#19820#0" />
-            <element signature="e#19889#19960#0" />
-            <element signature="e#19991#20073#0" />
-            <element signature="e#20275#20428#1" />
-            <element signature="e#21331#23965#0" />
-            <element signature="e#21331#21350#0" />
-            <element signature="e#21578#21828#0" />
-            <element signature="e#22198#22332#0" />
-            <element signature="e#22378#22498#0" />
-            <element signature="e#22647#22672#0" />
-            <element signature="e#23412#23785#0" />
-            <element signature="e#23868#23965#0" />
-            <element signature="e#24030#24897#0" />
-            <element signature="e#24030#24137#1" />
-            <element signature="e#24208#24879#0" />
-            <element signature="e#25123#25433#0" />
-          </folding>
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/results/detect/yolo_classify_exp10_best_precision/exp11/P5789-25350_26150_6125_6925/stage0_Conv_features.png">
-      <provider selected="true" editor-type-id="images" />
-    </entry>
     <entry file="file://$PROJECT_DIR$/images/P5789-25350_26150_6889_7689.png">
       <provider selected="true" editor-type-id="images" />
     </entry>
@@ -1586,61 +1437,6 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/tasks/val.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="548">
-          <caret line="465" selection-start-line="465" selection-end-line="465" />
-          <folding>
-            <element signature="e#0#9#0" expanded="true" />
-            <element signature="e#5282#9862#0" />
-            <element signature="e#5769#9190#0" />
-            <element signature="e#6742#7264#0" />
-            <element signature="e#7307#7978#0" />
-          </folding>
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/loss/loss.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="704">
-          <caret line="273" column="51" selection-start-line="273" selection-start-column="51" selection-end-line="273" selection-end-column="51" />
-          <folding>
-            <element signature="e#298#5923#0" />
-            <element signature="e#385#2312#0" />
-            <element signature="e#557#574#0" />
-            <element signature="e#850#979#0" />
-            <element signature="e#1090#2312#0" />
-            <element signature="e#1631#1746#0" />
-            <element signature="e#2356#5923#0" />
-            <element signature="e#2722#5800#0" />
-            <element signature="e#2937#5452#0" />
-            <element signature="e#3170#4855#0" />
-            <element signature="e#3840#3993#0" />
-            <element signature="e#4186#4855#0" />
-            <element signature="e#4234#4700#0" />
-            <element signature="e#4451#4536#0" />
-            <element signature="e#5958#7484#0" />
-            <element signature="e#6010#6090#0" />
-            <element signature="e#6220#6890#0" />
-            <element signature="e#6539#6779#0" />
-            <element signature="e#6955#7484#0" />
-            <element signature="e#6955#6996#0" />
-            <element signature="e#7553#11963#0" />
-            <element signature="e#7664#8490#0" />
-            <element signature="e#8504#9062#0" />
-            <element signature="e#8624#9043#0" />
-            <element signature="e#8845#8971#0" />
-            <element signature="e#9125#9631#0" />
-            <element signature="e#9154#9568#0" />
-            <element signature="e#9327#9438#0" />
-            <element signature="e#9681#11963#0" />
-            <element signature="e#10472#10481#0" />
-            <element signature="e#11283#11293#0" />
-            <element signature="e#11565#11743#0" />
-          </folding>
-        </state>
-      </provider>
-    </entry>
     <entry file="file://$PROJECT_DIR$/tasks/visual_tools/debug.py">
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="275">
@@ -1659,37 +1455,6 @@
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="553">
           <caret line="39" column="49" selection-start-line="39" selection-start-column="49" selection-end-line="39" selection-end-column="49" />
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/utils/mix_utils.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="161">
-          <caret line="70" column="63" selection-start-line="70" selection-start-column="21" selection-end-line="70" selection-end-column="63" />
-          <folding>
-            <element signature="e#0#10#0" expanded="true" />
-          </folding>
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/loss/basic_loss.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="271">
-          <caret line="148" column="28" selection-start-line="148" selection-start-column="28" selection-end-line="148" selection-end-column="28" />
-          <folding>
-            <element signature="e#80#725#0" />
-            <element signature="e#181#323#0" />
-            <element signature="e#368#725#0" />
-            <element signature="e#759#2276#0" />
-            <element signature="e#932#1196#0" />
-            <element signature="e#1258#2276#0" />
-            <element signature="e#1299#1323#0" />
-            <element signature="e#1995#2092#0" />
-            <element signature="e#2311#3271#0" />
-            <element signature="e#2492#2756#0" />
-            <element signature="e#2801#3271#0" />
-            <element signature="e#3360#3568#1" />
-          </folding>
         </state>
       </provider>
     </entry>
@@ -1728,20 +1493,88 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/tasks/train.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="516">
-          <caret line="195" column="9" selection-start-line="195" selection-start-column="9" selection-end-line="195" selection-end-column="9" />
-          <folding>
-            <element signature="e#0#15#0" expanded="true" />
-          </folding>
-        </state>
-      </provider>
-    </entry>
     <entry file="file://$PROJECT_DIR$/configs/hyp/hyp_quick_pos.yaml">
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="577">
           <caret line="40" column="48" selection-start-line="40" selection-start-column="48" selection-end-line="40" selection-end-column="48" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/tasks/detect.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="595">
+          <caret line="69" column="34" selection-start-line="69" selection-start-column="34" selection-end-line="69" selection-end-column="34" />
+          <folding>
+            <element signature="e#6860#10541#0" />
+            <element signature="e#7679#9013#0" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/tasks/yolov5_convert.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state>
+          <folding>
+            <element signature="e#0#46#0" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/results/train/merge_scls/c3_classify_s/exp/results.png">
+      <provider selected="true" editor-type-id="images" />
+    </entry>
+    <entry file="file://$PROJECT_DIR$/results/train/merge_scls/c3_classify_s/exp/train.log">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="250">
+          <caret line="4843" column="37" selection-start-line="4843" selection-start-column="37" selection-end-line="4843" selection-end-column="37" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/tasks/convert.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="350">
+          <caret line="26" column="30" lean-forward="true" selection-start-line="26" selection-start-column="30" selection-end-line="26" selection-end-column="30" />
+          <folding>
+            <element signature="e#0#46#0" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$USER_HOME$/anaconda3/envs/mmlab/Lib/site-packages/torch/serialization.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="221">
+          <caret line="211" selection-start-line="211" selection-end-line="211" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$USER_HOME$/anaconda3/envs/mmlab/Lib/site-packages/torch/optim/optimizer.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="-4">
+          <caret line="126" column="8" selection-start-line="126" selection-start-column="8" selection-end-line="126" selection-end-column="8" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$USER_HOME$/anaconda3/envs/mmlab/Lib/site-packages/torch/distributed/nn/api/remote_module.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="71">
+          <caret line="363" column="8" selection-start-line="363" selection-start-column="8" selection-end-line="363" selection-end-column="8" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$USER_HOME$/anaconda3/envs/mmlab/Lib/codecs.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="213">
+          <caret line="309" selection-start-line="309" selection-end-line="309" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/tasks/convert_cat_filter.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="94">
+          <caret line="25" column="42" lean-forward="true" selection-start-line="25" selection-start-column="42" selection-end-line="25" selection-end-column="42" />
+          <folding>
+            <element signature="e#0#46#0" expanded="true" />
+          </folding>
         </state>
       </provider>
     </entry>
@@ -1807,85 +1640,24 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/tasks/detect.py">
+    <entry file="file://$PROJECT_DIR$/loss/basic_loss.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="595">
-          <caret line="69" column="34" selection-start-line="69" selection-start-column="34" selection-end-line="69" selection-end-column="34" />
+        <state relative-caret-position="704">
+          <caret line="158" column="36" lean-forward="true" selection-start-line="158" selection-start-column="36" selection-end-line="158" selection-end-column="36" />
           <folding>
-            <element signature="e#6860#10541#0" />
-            <element signature="e#7679#9013#0" />
+            <element signature="e#80#725#0" />
+            <element signature="e#181#323#0" />
+            <element signature="e#368#725#0" />
+            <element signature="e#759#2276#0" />
+            <element signature="e#932#1196#0" />
+            <element signature="e#1258#2276#0" />
+            <element signature="e#1299#1323#0" />
+            <element signature="e#1995#2092#0" />
+            <element signature="e#2311#3271#0" />
+            <element signature="e#2492#2756#0" />
+            <element signature="e#2801#3271#0" />
+            <element signature="e#3360#3568#1" />
           </folding>
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/tasks/yolov5_convert.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state>
-          <folding>
-            <element signature="e#0#46#0" expanded="true" />
-          </folding>
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/results/train/merge_scls/c3_classify_s/exp/results.png">
-      <provider selected="true" editor-type-id="images" />
-    </entry>
-    <entry file="file://$PROJECT_DIR$/results/train/merge_scls/c3_classify_s/exp/train.log">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="250">
-          <caret line="4843" column="37" selection-start-line="4843" selection-start-column="37" selection-end-line="4843" selection-end-column="37" />
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/tasks/convert.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="350">
-          <caret line="26" column="30" lean-forward="true" selection-start-line="26" selection-start-column="30" selection-end-line="26" selection-end-column="30" />
-          <folding>
-            <element signature="e#0#46#0" expanded="true" />
-          </folding>
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$USER_HOME$/anaconda3/envs/mmlab/Lib/site-packages/torch/serialization.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="221">
-          <caret line="211" selection-start-line="211" selection-end-line="211" />
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$USER_HOME$/anaconda3/envs/mmlab/Lib/site-packages/torch/optim/optimizer.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="-4">
-          <caret line="126" column="8" selection-start-line="126" selection-start-column="8" selection-end-line="126" selection-end-column="8" />
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$USER_HOME$/anaconda3/envs/mmlab/Lib/site-packages/torch/distributed/nn/api/remote_module.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="71">
-          <caret line="363" column="8" selection-start-line="363" selection-start-column="8" selection-end-line="363" selection-end-column="8" />
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/models/model.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="556">
-          <caret line="375" column="57" selection-start-line="375" selection-start-column="57" selection-end-line="375" selection-end-column="57" />
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$USER_HOME$/anaconda3/envs/mmlab/Lib/codecs.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="213">
-          <caret line="309" selection-start-line="309" selection-end-line="309" />
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/configs/model/zjdet_cat_filter_detect.yaml">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="553">
-          <caret line="98" column="17" selection-start-line="98" selection-start-column="13" selection-end-line="98" selection-end-column="17" />
         </state>
       </provider>
     </entry>
@@ -1896,12 +1668,76 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/tasks/convert_cat_filter.py">
+    <entry file="file://$PROJECT_DIR$/tasks/val.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="172">
-          <caret line="36" selection-start-line="36" selection-end-line="36" />
+        <state relative-caret-position="548">
+          <caret line="465" selection-start-line="465" selection-end-line="465" />
           <folding>
-            <element signature="e#0#46#0" expanded="true" />
+            <element signature="e#0#9#0" expanded="true" />
+            <element signature="e#5282#9862#0" />
+            <element signature="e#5769#9190#0" />
+            <element signature="e#6742#7264#0" />
+            <element signature="e#7307#7978#0" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/configs/model/zjdet_cat_filter_detect.yaml">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="139">
+          <caret line="86" column="31" lean-forward="true" selection-start-line="86" selection-start-column="31" selection-end-line="86" selection-end-column="31" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/utils/mix_utils.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="248">
+          <caret line="192" column="72" lean-forward="true" selection-start-line="192" selection-start-column="72" selection-end-line="192" selection-end-column="72" />
+          <folding>
+            <element signature="e#0#10#0" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$USER_HOME$/anaconda3/envs/mmlab/Lib/site-packages/torch/jit/_trace.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="15">
+          <caret line="577" column="4" selection-start-line="577" selection-start-column="4" selection-end-line="577" selection-end-column="4" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/models/model.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="147">
+          <caret line="250" column="104" selection-start-line="250" selection-start-column="104" selection-end-line="250" selection-end-column="104" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/utils/callback.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="250">
+          <caret line="16" column="20" lean-forward="true" selection-start-line="16" selection-start-column="20" selection-end-line="19" selection-end-column="57" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/loss/loss.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="142">
+          <caret line="266" column="51" lean-forward="true" selection-start-line="266" selection-start-column="51" selection-end-line="266" selection-end-column="51" />
+          <folding>
+            <element signature="e#557#574#0" />
+            <element signature="e#850#979#0" />
+            <element signature="e#1631#1746#0" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/tasks/train.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="98">
+          <caret line="509" column="57" lean-forward="true" selection-start-line="509" selection-start-column="57" selection-end-line="509" selection-end-column="57" />
+          <folding>
+            <element signature="e#0#15#0" expanded="true" />
           </folding>
         </state>
       </provider>

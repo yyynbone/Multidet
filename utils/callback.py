@@ -48,7 +48,10 @@ class Callback():
                         warnings.simplefilter('ignore')  # suppress jit trace warning
                         # if error Only tensors, lists, tuples of tensors, or dictionary of tensors can be output from traced functions;
                         # which means the output  of model is a list, so you can tuple it.
-                        self.tb.add_graph(torch.jit.trace(de_parallel(model), imgs[0:1], strict=False), [])
+                        try:
+                            self.tb.add_graph(torch.jit.trace(de_parallel(model), imgs[0:1], strict=False), [])
+                        except:
+                            print("jit trace wrong")
             if ni < 3:
                 f = self.save_dir / f'train_batch{ni}.jpg'  # filename
                 Thread(target=plot_images, args=(imgs, labels, paths, f), daemon=True).start()

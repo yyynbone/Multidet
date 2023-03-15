@@ -187,7 +187,7 @@ class Model(nn.Module):
         self.need_stride = False
 
     def forward(self, x, augment=False, profile=False, visualize=False):
-        # if not hasattr(self, 'det_out_idx'):
+        # if not hasattr(self, 'det_out_idx'):`
         #     self.det_out_idx = 24
         if augment:
             return self._forward_augment(x)  # augmented inference, None
@@ -233,10 +233,7 @@ class Model(nn.Module):
             if profile:
                 self._profile_one_layer(m, x, dt, thops, paras)
             # print(i, m)
-            if isinstance(m, (Classify, YOLOv8Classify)):
-                cls_input = x
-                x = m(x)
-            else:
+            if not isinstance(m, (Classify, YOLOv8Classify)):
                 # x = m(x)  # run
                 try:
                     x = m(x)# run
@@ -246,16 +243,12 @@ class Model(nn.Module):
             #     from utils import show_model_param
             #     show_model_param(m, path='./exp')
             #     print(f"{i}, {x[0, 0, :5, :5]}")
-            if i >= self.head_from:
-                if self.filter_bool is not None:
-                    x = iter_extend_axis(x, self.filter_bool)
-                head_out.append(x)
-
-            if isinstance(m, (Classify,YOLOv8Classify)) and i < self.head_from:
-                if not self.need_stride and not profile:
-                    out = x.sigmoid() if m.training else x[0]
-                    out_bool = torch.where(out > 0.8, torch.ones_like(out), torch.zeros_like(out)).squeeze().bool()
-                    x = cls_input[out_bool]
+            if isinstance(m, (Classify, YOLOv8Classify)):
+                cls_out = m(x)
+                if i < self.head_from and not self.need_stride and not profile:
+                    out = cls_out.sigmoid() if m.training else cls_out[0]
+                    out_bool = torch.where(out > 0.4, torch.ones_like(out), torch.zeros_like(out)).squeeze().bool()
+                    x = x[out_bool] # RuntimeError: NYI: Named tensors are not supported with the tracer
                     if not len(x):
                         print('return in classify, all background')
                         cls_pred = [x for _ in range(self.nl)]
@@ -264,8 +257,13 @@ class Model(nn.Module):
                     self.filter_bool = out_bool
                     self.out_det_from = 1
                     head_out.append((out, out_bool))
-                else:
-                    x = cls_input
+                if i>=self.head_from:
+                    x = m(x)
+
+            if i >= self.head_from:
+                if self.filter_bool is not None:
+                    x = iter_extend_axis(x, self.filter_bool)
+                head_out.append(x)
 
             cache.append(x if m.i in self.save else None)  # save output
             if visualize:
