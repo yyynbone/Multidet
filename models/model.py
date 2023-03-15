@@ -26,7 +26,7 @@ def parse_model(d, ch_in, logger=LOGGER):  # model_dict, input_channels(3)
     backbone, head = d['backbone'], d['head']
     neck = d.get('neck', [])
     filter =  d.get('filter', [])
-    neck_from = len(backbone)
+    neck_from = len(filter) + len(backbone)
     head_from = len(neck) + neck_from
     depth_layer = d['depth_layer']
     width_layer = d['width_layer']
@@ -42,7 +42,7 @@ def parse_model(d, ch_in, logger=LOGGER):  # model_dict, input_channels(3)
 
         if m in width_layer:
             if i < head_from:
-                if i == 0:
+                if i == 0 or f == 'input':
                     args.insert(0, ch_in)
                     args[1] = make_divisible(args[1] * gw, 8)
                 elif 'class' in m.lower():
@@ -74,7 +74,10 @@ def parse_model(d, ch_in, logger=LOGGER):  # model_dict, input_channels(3)
         np = sum(x.numel() for x in m_.parameters())  # number params
         m_.i, m_.f, m_.type, m_.np = i, f, t, np  # attach index, 'from' index, type, number params
         logger.info(f'{i:>3}{str(f):>18}{np:10.0f}  {t:<40}{str(args):<30}')  # print
-        save.extend(x % i for x in ([f] if isinstance(f, int) else f) if x != -1)  # append to savelist
+        # if isinstance(f, str):
+        #     print(f)
+        #     print(f=='input')
+        save.extend(x % i for x in ([f] if isinstance(f, int) else f) if x != -1 and not isinstance(x, str))  # append to savelist
         layers.append(m_)
     return nn.Sequential(*layers), sorted(save), (neck_from, head_from)
 
@@ -213,22 +216,32 @@ class Model(nn.Module):
         self.out_det_from = 0
         self.filter_bool = None
         # print(f"image, {x[0, 0, :5, :5]}")
+        input = x
         for i, m in enumerate(self.model):
-
             # add freezed layer specially the layer of batched normal, because of requires_grad is inefficient to running_mean and var
             if isinstance(self.freeze, list):
                 if f'model.{i}.' in self.freeze:
                     m.eval()
             if m.f != -1:  # if not from previous layer
-                x = cache[m.f] if isinstance(m.f, int) else [x if j == -1 else cache[j] for j in m.f]  # from earlier layers
+                if m.f=='input':
+                    if self.filter_bool is not None:
+                        x = input[self.filter_bool]
+                    else:
+                        x = input
+                else:
+                    x = cache[m.f] if isinstance(m.f, int) else [x if j == -1 else cache[j] for j in m.f]  # from earlier layers
             if profile:
                 self._profile_one_layer(m, x, dt, thops, paras)
-
+            # print(i, m)
             if isinstance(m, (Classify, YOLOv8Classify)):
                 cls_input = x
                 x = m(x)
             else:
-                x = m(x)# run
+                # x = m(x)  # run
+                try:
+                    x = m(x)# run
+                except:
+                    print(i, m, [j.shape for j in (x if isinstance(x, list) else [x]) ])
             # if i==0:
             #     from utils import show_model_param
             #     show_model_param(m, path='./exp')
@@ -239,17 +252,20 @@ class Model(nn.Module):
                 head_out.append(x)
 
             if isinstance(m, (Classify,YOLOv8Classify)) and i < self.head_from:
-                if not self.need_stride:
+                if not self.need_stride and not profile:
                     out = x.sigmoid() if m.training else x[0]
                     out_bool = torch.where(out > 0.8, torch.ones_like(out), torch.zeros_like(out)).squeeze().bool()
                     x = cls_input[out_bool]
                     if not len(x):
+                        print('return in classify, all background')
                         cls_pred = [x for _ in range(self.nl)]
                         return (cls_pred if self.training else (x, cls_pred),)
                     cache = [sx[out_bool] if sx is not None else None for sx in cache ]
                     self.filter_bool = out_bool
                     self.out_det_from = 1
                     head_out.append((out, out_bool))
+                else:
+                    x = cls_input
 
             cache.append(x if m.i in self.save else None)  # save output
             if visualize:
@@ -357,7 +373,7 @@ if __name__ == '__main__':
     FILE = Path(__file__).resolve()
     ROOT = FILE.parents[1]
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/c3_classify_s.yaml', help='model.yaml')
+    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/zjdet_neck.yaml', help='model.yaml')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--profile', default=True, help='profile model speed')
     parser.add_argument('--test', action='store_true', help='test all yolo*.yaml')
@@ -366,7 +382,7 @@ if __name__ == '__main__':
 
     print_args(FILE.stem, opt)
     device = select_device(opt.device)
-    ch_in = 3
+    ch_in = 1
     # Create model
     model = Model(opt.cfg, ch=ch_in,nc=1).to(device)
     model.train()
