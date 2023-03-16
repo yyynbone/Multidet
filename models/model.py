@@ -18,8 +18,8 @@ try:
 except ImportError:
     thop = False
 
-det_or_seg = (Detect, YOLOv8Detect, IDetect)
-
+det_head = (Detect, YOLOv8Detect, IDetect)
+cls_head = (Classify, YOLOv8Classify, SqueezenetClassify)
 def parse_model(d, ch_in, logger=LOGGER):  # model_dict, input_channels(3)
     logger.info(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}")
     anchors, nc, gd, gw = d.get('anchors', []), d['nc'], d['depth_multiple'], d['width_multiple']
@@ -109,7 +109,7 @@ def attempt_load(weights, map_location=None, cfg=None, inplace=True, fuse=True, 
 
     # Compatibility updates
     for m in model.modules():
-        if type(m) in [nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU, *det_or_seg, Model]:
+        if type(m) in [nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU, *det_head, Model]:
             m.inplace = inplace  # pytorch 1.7.0 compatibility
             if type(m)==Detect:
                 if not isinstance(m.anchor_grid, list):  # new Detect Layer compatibility
@@ -128,7 +128,7 @@ def attempt_load(weights, map_location=None, cfg=None, inplace=True, fuse=True, 
         return model  # return ensemble
 
 class Model(nn.Module):
-    def __init__(self, cfg='zjdet.yaml', freeze=None, ch=3, nc=80, anchors=None, logger=LOGGER, verbose=False):  # model, input channels, number of classes
+    def __init__(self, cfg='zjdet.yaml', freeze=None, ch=3, nc=80, anchors=None, logger=LOGGER, verbose=False, imgsz=(640,640)):  # model, input channels, number of classes
         super().__init__()
         self.logger =  logger
         if isinstance(cfg, dict):
@@ -157,7 +157,7 @@ class Model(nn.Module):
         head = self.model[self.head_from: ]  # Detect()
         for i, m in enumerate(head):
             s = 256  # 2x min stride
-            if isinstance(m, det_or_seg):
+            if isinstance(m, det_head):
                 # ERROR, can't define the module here, it would collect det_head as a model to self, so self will be Model('model':xxx, 'det_from':xx)
                 # so, when we calculate flops, it will calculate det_from again and again.
                 # self.det_head = m
@@ -183,7 +183,7 @@ class Model(nn.Module):
 
         # Init weights, biases
         initialize_weights(self)
-        self.info(verbose=verbose)
+        self.info(verbose=verbose, img_size=imgsz)
         self.need_stride = False
 
     def forward(self, x, augment=False, profile=False, visualize=False):
@@ -233,7 +233,7 @@ class Model(nn.Module):
             if profile:
                 self._profile_one_layer(m, x, dt, thops, paras)
             # print(i, m)
-            if not isinstance(m, (Classify, YOLOv8Classify)):
+            if not isinstance(m, cls_head):
                 # x = m(x)  # run
                 try:
                     x = m(x)# run
@@ -243,7 +243,7 @@ class Model(nn.Module):
             #     from utils import show_model_param
             #     show_model_param(m, path='./exp')
             #     print(f"{i}, {x[0, 0, :5, :5]}")
-            if isinstance(m, (Classify, YOLOv8Classify)):
+            if isinstance(m, cls_head):
                 cls_out = m(x)
                 if i < self.head_from and not self.need_stride and not profile:
                     out = cls_out.sigmoid() if m.training else cls_out[0]
@@ -300,7 +300,7 @@ class Model(nn.Module):
         return y
 
     def _profile_one_layer(self, m, x, dt, thops, params):
-        c = isinstance(m, det_or_seg)  # is final layer, copy input as inplace fix
+        c = isinstance(m, det_head)  # is final layer, copy input as inplace fix
         o = thop.profile(m, inputs=(x.copy() if c else x,), verbose=False)[0] / 1E9 * 2 if thop else 0  # FLOPs
         t = time_sync()
         for _ in range(10):
@@ -311,7 +311,7 @@ class Model(nn.Module):
         if m == self.model[0]:
             self.logger.info(f"{'time (ms)':>10s} {'GFLOPs':>10s} {'params':>10s}  {'module':>40s}   {'input_size':>30s}")
         self.logger.info(f'{dt[-1]:10.2f} {o:10.4f} {m.np:10.0f}  {m.type:40s}  {[j.shape for j in x] if isinstance(x, list) else x.shape}')
-        if c:
+        if c or isinstance(m, cls_head):
             self.logger.info(f"{sum(dt):10.2f} {sum(thops):>10.4f} {sum(params):>10.0f}  Total ")
 
     def _print_biases(self):
@@ -359,7 +359,7 @@ class Model(nn.Module):
         self = super()._apply(fn)
         m = self.model[self.det_head_idx] if hasattr(self, 'det_head_idx') else self.model[-1]
         # m = self.det_head
-        if isinstance(m, det_or_seg):
+        if isinstance(m, det_head):
             m.stride = fn(m.stride)
             if hasattr(m, 'grid'):
                 m.grid = list(map(fn, m.grid))
@@ -371,7 +371,7 @@ if __name__ == '__main__':
     FILE = Path(__file__).resolve()
     ROOT = FILE.parents[1]
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/zjdet_neck.yaml', help='model.yaml')
+    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/zjdet_cat_filter_detect.yaml', help='model.yaml')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--profile', default=True, help='profile model speed')
     parser.add_argument('--test', action='store_true', help='test all yolo*.yaml')
@@ -382,12 +382,12 @@ if __name__ == '__main__':
     device = select_device(opt.device)
     ch_in = 1
     # Create model
-    model = Model(opt.cfg, ch=ch_in,nc=1).to(device)
+    model = Model(opt.cfg, ch=ch_in, nc=1, imgsz=(640,320)).to(device)
     model.train()
 
     # Profile
     if opt.profile:
-        img = torch.rand(8 if torch.cuda.is_available() else 1, ch_in, 640, 640).to(device)
+        img = torch.rand(8 if torch.cuda.is_available() else 1, ch_in, 640, 320).to(device)
         y = model(img, profile=True)
 
     # Test all models
