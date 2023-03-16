@@ -401,6 +401,7 @@ def train(hyp, opt, logger, device, Local_rank=-1, Node=-1, World_size=1):
             # print(logger.handlers)
             # if Node in [-1,0] and Local_rank in [-1,0]:
             if len(logger.handlers):
+                logger.info(f"{datetime.now().strftime('%Y-%m-%d_%H:%M:%S')}")
                 pbar = tqdm(pbar, total=nb, ncols=200, bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}')  # progress bar
             optimizer.zero_grad()
 
