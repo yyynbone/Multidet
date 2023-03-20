@@ -160,7 +160,7 @@ def binary_cross_entropy(pred,
     # loss = reduce_loss(loss, reduction)
     # ft_num = label.shape[0] - label.sum()
     # tt_num = label.sum()
-    loss /=(label.shape[0] + (pos_weight-1)*label.sum())
+    loss = loss.sum()/(label.shape[0] + (pos_weight-1)*label.sum())
     return loss
 class CrossEntropyLoss(nn.Module):
     def __init__(self,
