@@ -151,6 +151,7 @@ class Model(nn.Module):
         # self.names = [str(i) for i in range(self.yaml['nc'])]  # default names
         self.inplace = self.yaml.get('inplace', True)
         self.freeze = freeze
+        self.class_conf = 0.4 #set the filter bg and obj conf
 
         # Build strides, anchors
         # m = self.model[-1]  # Detect()
@@ -163,7 +164,6 @@ class Model(nn.Module):
                 # self.det_head = m
                 self.det_head_idx = self.head_from + i
                 m.inplace = self.inplace
-                self.nl = m.nl
                 with torch.no_grad():
                     self.need_stride = True
                     model_out = self.forward(torch.zeros(1, ch, s, s))
@@ -218,6 +218,12 @@ class Model(nn.Module):
         # print(f"image, {x[0, 0, :5, :5]}")
         input = x
         for i, m in enumerate(self.model):
+            if not len(x):
+                if isinstance(m, det_head):
+                    cls_pred = [x for _ in range(m.nl)]
+                    det_out = x.view(input.shape[0], 0, m.no)# modify det out, it should be .view(bs, -1, self.no)
+                    head_out.append(cls_pred if self.training else (det_out, cls_pred))  # return (cls, det_out)
+                continue
             # add freezed layer specially the layer of batched normal, because of requires_grad is inefficient to running_mean and var
             if isinstance(self.freeze, list):
                 if f'model.{i}.' in self.freeze:
@@ -238,26 +244,36 @@ class Model(nn.Module):
                 try:
                     x = m(x)# run
                 except:
-                    print(i, m, [j.shape for j in (x if isinstance(x, list) else [x]) ])
+                    self.logger.info(i, m)
+                    self.logger.info([j.shape for j in (x if isinstance(x, list) else [x])])
             # if i==0:
             #     from utils import show_model_param
             #     show_model_param(m, path='./exp')
             #     print(f"{i}, {x[0, 0, :5, :5]}")
             if isinstance(m, cls_head):
-                cls_out = m(x)
-                if i < self.head_from and not self.need_stride and not profile:
-                    out = cls_out.sigmoid() if m.training else cls_out[0]
-                    out_bool = torch.where(out > 0.4, torch.ones_like(out), torch.zeros_like(out)).squeeze().bool()
-                    x = x[out_bool] # RuntimeError: NYI: Named tensors are not supported with the tracer
-                    if not len(x):
-                        print('return in classify, all background')
-                        cls_pred = [x for _ in range(self.nl)]
-                        return (cls_pred if self.training else (x, cls_pred),)
-                    cache = [sx[out_bool] if sx is not None else None for sx in cache ]
-                    self.filter_bool = out_bool
-                    self.out_det_from = 1
-                    head_out.append((out, out_bool))
-                if i>=self.head_from:
+                if i < self.head_from:
+                    cls_out = m(x)
+                    if not self.need_stride and not profile:
+                        self.out_det_from = 1
+                        out = cls_out.sigmoid() if m.training else cls_out[0]
+                        out_int = torch.where(out > getattr(self, 'class_conf', 0.4),
+                                              torch.ones_like(out), torch.zeros_like(out))  # (n,1)
+                        if getattr(self, 'train_val_filter', True):
+                            # out_bool = out_int.squeeze().bool()  # not squeeze,if n>1, this shape from (n,1) to (n); if n=1, to (), eg: torch.tensor([[1]]) to torch.tensor(1)
+                            out_bool = out_int.flatten().bool()
+                            x = x[out_bool] # RuntimeError: NYI: Named tensors are not supported with the tracer
+                            # if not len(x):
+                            #     self.logger.info('return in classify, all background')
+                            #     cls_pred = [x for _ in range(self.nl)]
+                            #     det_out = x.view(x.shape[0], 0, )# modify det out, it should be .view(bs, -1, self.no)
+                            #     return (cls_out if m.training else (out_int, cls_out[1]),
+                            #             cls_pred if self.training else (det_out, cls_pred))  # return (cls, det_out)
+                            cache = [sx[out_bool] if sx is not None else None for sx in cache ]
+                            self.filter_bool = out_bool
+                        # modify: (not pred.sigmoid() but pred, a pred_out result of (n,1)
+                        # head_out.append((out, out_bool))
+                        head_out.append(cls_out if m.training else (out_int, cls_out[1]))
+                else:
                     x = m(x)
 
             if i >= self.head_from:
@@ -382,12 +398,12 @@ if __name__ == '__main__':
     device = select_device(opt.device)
     ch_in = 1
     # Create model
-    model = Model(opt.cfg, ch=ch_in, nc=1, imgsz=(640,320)).to(device)
+    model = Model(opt.cfg, ch=ch_in, nc=1, imgsz=(224,224)).to(device)
     model.train()
 
     # Profile
     if opt.profile:
-        img = torch.rand(8 if torch.cuda.is_available() else 1, ch_in, 640, 320).to(device)
+        img = torch.rand(8 if torch.cuda.is_available() else 1, ch_in, 224, 224).to(device)
         y = model(img, profile=True)
 
     # Test all models

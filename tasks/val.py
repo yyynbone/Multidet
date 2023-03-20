@@ -125,7 +125,8 @@ def run(data,
         #     im = im[filter_bool]
         #     paths = paths[filter_bool]
         #     shapes = shapes[filter_bool]
-
+        # if model.filter_bool is not None:
+        #     logger.info("now we select object image use filter")
         out, train_out =  head_out[model.out_det_from]  # detect out
 
         dt[1] += time_sync() - t2
@@ -226,8 +227,8 @@ def run(data,
                 save_object(im ,class_label.cpu(), out.cpu(), paths, save_dir=save_dir)
 
         if model.out_det_from == 1:
-            cls_out, cls_bool = head_out[0]  # detect out
-            out = torch.where(cls_bool[..., None], torch.ones_like(cls_out), torch.zeros_like(cls_out))
+            out, _ = head_out[0]  # detect out
+
             cls_stats.append((out.cpu(), class_label.cpu()))
             if visual_matched:
                 save_object(im ,class_label.cpu(), out.cpu(), paths, save_dir=save_dir)
@@ -238,7 +239,7 @@ def run(data,
     if len(cls_stats):
         p, r , accu = classify_match(*cls_stats, logger_func=logger.info)
         if loss_num==1:
-            dt[2] = 0.
+            dt[2] += 0.
             det_result = (p, r, 0, accu, (loss.cpu() / len(dataloader)).tolist())
             # Print speeds
             t = tuple(x / seen * 1E3 for x in dt)  # speeds per image
@@ -388,6 +389,7 @@ def parse_opt():
     parser.add_argument('--filter-str', type=str, default='', help='filter and select the image name with string')
     parser.add_argument('--ignore-bkg', action='store_true', help='filter and image of background')
     parser.add_argument('--loss-num', type=int, default=3, help='loss num of class , detect or seg')
+    parser.add_argument('--train-val-filter', action='store_true', help='filter first use the classify head')
     opt = parser.parse_args()
     opt.data = check_yaml(opt.data)  # check YAML
     opt.save_json |= opt.data.endswith('coco.yaml')
@@ -410,6 +412,7 @@ def main(opt):
     else:
         weight_list.append(opt.weights)
 
+    last_conf_list = opt.last_conf
 
     for opt.weights in weight_list:
         opt.device = select_device(opt.device, batch_size=opt.batch_size)
@@ -437,6 +440,7 @@ def main(opt):
         opt.model.names = opt.data['names']  # get class names
         # if  not hasattr(opt.model, 'device'):
         opt.model.device = opt.device
+        opt.model.train_val_filter = opt.train_val_filter
         # stride = 32  # grid size (max stride)
         # opt.imgsz = check_img_size(opt.imgsz, s=stride, logger=opt.logger)  # check image size
 
@@ -465,7 +469,6 @@ def main(opt):
                       collate_fn=LoadImagesAndLabels.collate_fn)
 
         # run normally
-        last_conf_list = opt.last_conf
         for last_conf in last_conf_list:
             opt.logger.info(f'now we thresh the conf of {last_conf}')
             opt.last_conf = last_conf

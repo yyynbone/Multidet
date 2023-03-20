@@ -142,8 +142,11 @@ def train(hyp, opt, logger, device, Local_rank=-1, Node=-1, World_size=1):
 
     # with torch_distributed_zero_first(Local_rank):
     #     show_model_param(model,'origin')
-    # Image size
 
+    # set model.train_val_filter
+    model.train_val_filter = opt.train_val_filter
+
+    # Image size
     gs = int(model.stride.max()) if hasattr(model, 'stride') else 32
     gs = max(gs, 32)  # grid size (max stride)
     imgsz = [opt.imgsz[0], opt.imgsz[0]] if len(opt.imgsz)==1 else opt.imgsz
@@ -721,6 +724,7 @@ def parse_opt(known=False):
     parser.add_argument('--loss-supervision', type=int, default=0, help='loss epoch patiances of supervision')
     parser.add_argument('--filter-str', type=str, default='', help='filter and select the image name with string')
     parser.add_argument('--ignore-bkg', action='store_true', help='filter and image of background')
+    parser.add_argument('--train-val-filter', action='store_true', help='filter first use the classify head')
 
     parser.add_argument('--local_rank', type=int, default=-1, help='DDP parameter, do not modify')
     parser.add_argument('--node', type=int, default=0, help='computer node')
