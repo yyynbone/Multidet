@@ -3,6 +3,8 @@ import math
 def linear(y1=0.0, y2=1.0, steps=100):
     return lambda x: (1 - x / (steps - 1)) * (y1- y2) + y2
 
+def step(y1=0.0, y2=1.0, steps=100, per_steps=100):
+    return lambda x: y1  +  (y2- y1)* (x//per_steps) / ((steps - 1)/per_steps)
 
 def one_cycle(y1=0.0, y2=1.0, steps=100):
     # lambda function for sinusoidal ramp from y1 to y2 https://arxiv.org/pdf/1812.01187.pdf

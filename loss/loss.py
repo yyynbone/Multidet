@@ -269,7 +269,7 @@ class ClassifyLoss():
             class_label = targets
         if self.pos_weight is None:
             ft_num = class_label.shape[0] - class_label.sum()
-            self.label_pos_weight = ft_num / max(class_label.sum(), 1)
+            self.label_pos_weight = ft_num // max(class_label.sum(), 1)
         else:
             self.label_pos_weight = self.pos_weight
         # print(self.pos_weight, self.label_pos_weight)
