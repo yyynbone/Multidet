@@ -290,7 +290,9 @@ def fitness(x):
         w = [0.1, 0.3, 0.1, 0.9]
         return (x[:, :4] * w).sum(1)
 
-def calcu_per_class(tp, conf, pred_cls, target_cls, area_idx=None, plot=False, save_dir='.', names=(),conf_t=0.1, eps=1e-16):
+def calcu_per_class(tp: object, conf: object, pred_cls: object, target_cls: object, area_idx: object = None, plot: object = False, save_dir: object = '.', names: object = (),
+                    conf_ts: object = 0.1,
+                    eps: object = 1e-16) -> object:
     """ Compute the average precision, recall and precision
 
     # Arguments
@@ -301,7 +303,9 @@ def calcu_per_class(tp, conf, pred_cls, target_cls, area_idx=None, plot=False, s
     # Returns
         The average precision as computed in py-faster-rcnn.
     """
-
+    if not isinstance(conf_ts, (list, tuple)):
+        conf_ts = [conf_ts]
+    conf_length = len(conf_ts)
     # Sort by objectness
     i = np.argsort(-conf)
     tp, conf, pred_cls = tp[i], conf[i], pred_cls[i]
@@ -312,8 +316,10 @@ def calcu_per_class(tp, conf, pred_cls, target_cls, area_idx=None, plot=False, s
     unique_classes = np.unique(target_cls)
     nc = unique_classes.shape[0]  # number of classes, number of detections
     div_class_num = tp.shape[1]
-    ap, p, r = np.zeros((nc, div_class_num, tp.shape[2])), np.zeros((nc,  div_class_num)), np.zeros((nc, div_class_num))
-    pred_truth, lev_pn, lev_tn = np.zeros((nc,  div_class_num)), np.zeros((nc, div_class_num)), np.zeros((nc,  div_class_num))
+    ap = np.zeros((nc, div_class_num, tp.shape[2]))
+    lev_tn = np.zeros((nc,  div_class_num))
+    p, r = np.zeros((conf_length, nc,  div_class_num)), np.zeros((conf_length, nc, div_class_num))
+    pred_truth, lev_pn = np.zeros((conf_length, nc,  div_class_num)), np.zeros((conf_length, nc, div_class_num))
     area_idx[:, 0] = True
     for ci, c in enumerate(unique_classes):
         i = pred_cls == c
@@ -328,9 +334,10 @@ def calcu_per_class(tp, conf, pred_cls, target_cls, area_idx=None, plot=False, s
             n_l = (target_cls[area_idx[:, idx]]==c).sum()
             lev_tn[ci, idx] = n_l
             n_p = len(tp_perc_area[:, 0])  # number of predictions
-            pred_truth[ci, idx] = tp_perc_area[conf_cls >= conf_t][:, 0].sum() if n_l else 0.
-            # -1 means the max ,0 means iou=0.5, precision shape [n,10]
-            lev_pn[ci, idx] = tp_perc_area[conf_cls >= conf_t].shape[0] if n_p else 0.
+            for li, conf_t in enumerate(conf_ts):
+                pred_truth[li, ci, idx] = tp_perc_area[conf_cls >= conf_t][:, 0].sum() if n_l else 0.
+                # -1 means the max ,0 means iou=0.5, precision shape [n,10]
+                lev_pn[li, ci, idx] = tp_perc_area[conf_cls >= conf_t].shape[0] if n_p else 0.
             if n_p == 0 or n_l == 0:
                 continue
             else:
@@ -348,18 +355,19 @@ def calcu_per_class(tp, conf, pred_cls, target_cls, area_idx=None, plot=False, s
                     if plot and j == 0 and idx == 0:
                         py.append(np.interp(px, mrec, mpre))  # precision at mAP@0.5
 
-                precision = precision[conf_cls >= conf_t]
-                recall = recall[conf_cls >= conf_t]
 
-                p[ci, idx] = precision[-1, 0]  if precision.shape[0] else 0.  # -1 means the max ,0 means iou=0.5, precision shape [n,10]
-                r[ci, idx] = recall[-1, 0] if recall.shape[0] else 0.
+                for li, conf_t in enumerate(conf_ts):
+                    precision_c = precision[conf_cls >= conf_t]
+                    recall_c = recall[conf_cls >= conf_t]
+                    p[li, ci, idx] = precision_c[-1, 0]  if precision_c.shape[0] else 0.  # -1 means the max ,0 means iou=0.5, precision shape [n,10]
+                    r[li, ci, idx] = recall_c[-1, 0] if recall_c.shape[0] else 0.
 
     names = [v for k, v in names.items() if k in unique_classes]  # list: only classes that have data
     names = {i: v for i, v in enumerate(names)}  # to dict
     if plot:
         plot_pr_curve(px, py, ap[:,0,:], Path(save_dir) / 'PR_curve.png', names)
 
-    return p, r, ap, unique_classes.astype('int32'), pred_truth, lev_pn, lev_tn
+    return p, r, pred_truth, lev_pn, ap, unique_classes.astype('int32'), lev_tn
 
 def compute_ap(recall, precision):
     """ Compute the average precision, given the recall and precision curves
@@ -575,24 +583,29 @@ def non_max_suppression_with_iof(prediction, conf_thres=0.25, iou_thres=0.45, cl
 
     return nms_iof(prediction) if iof_nms else prediction
 
-def classify_match(out, class_label, logger_func=print):
-    pl, rl = [], []
-    matched = out[:, 0] == class_label[:, 0]
-    match_num = matched.sum()
-    all_num = len(class_label)
-    accu = match_num /max(all_num, 0.01)
-    s = ('%20s' + '%11s' * 5) % ('Class', 'Labels', 'R_num', 'P_num', 'P', 'R')
-    logger_func(s)
-    pf = '%20s' + '%11i' * 3 + '%11.3g' * 2  # print format
-    logger_func(pf % ('all', all_num, all_num, match_num, accu, accu))
-    for i,cls in enumerate(['background', 'object']):
-        obj_num = (class_label[:, 0] == i).sum()
-        pred_num = (out[:, 0] == i).sum()
-        match_num = (out[matched] == i).sum()
-        p = match_num/max(pred_num,0.01)
-        r = match_num/max(obj_num,0.01)
-        pl.append(p)
-        rl.append(r)
-        logger_func(pf % (cls, obj_num, pred_num, match_num, p, r))
-    # logger_func(f"there are bg number {bg_num},  object number {obj_num}, pred object is {pred_num}, obj_matched {obj_match_num},  so P/{p:.3f} R/{r:.3f}")
-    return pl[-1], rl[-1], accu
+def classify_match(pred_out, class_label, conf_ts=0.5, logger_func=print):
+    if not isinstance(conf_ts, (list, tuple)):
+        conf_ts = [conf_ts]
+    ps, rs, accus = [], [], []
+    for conf_t in conf_ts:
+        out = np.where(pred_out > conf_t, 1, 0)
+        matched = out[:, 0] == class_label[:, 0]
+        match_num = matched.sum()
+        all_num = len(class_label)
+        accu = match_num /max(all_num, 0.01)
+        accus.append(accu)
+        s = ('%20s' + '%11s' * 5) % ('Class', 'Labels', 'R_num', 'P_num', 'P', 'R')
+        logger_func(s)
+        pf = '%20s' + '%11i' * 3 + '%11.3g' * 2  # print format
+        logger_func(pf % (f'all in conf {conf_t}', all_num, all_num, match_num, accu, accu))
+        for i,cls in enumerate(['background', 'object']):
+            obj_num = (class_label[:, 0] == i).sum()
+            pred_num = (out[:, 0] == i).sum()
+            match_num = (out[matched] == i).sum()
+            p = match_num/max(pred_num,0.01)
+            r = match_num/max(obj_num,0.01)
+            ps.append(p)
+            rs.append(r)
+            logger_func(pf % (cls, obj_num, pred_num, match_num, p, r))
+        # logger_func(f"there are bg number {bg_num},  object number {obj_num}, pred object is {pred_num}, obj_matched {obj_match_num},  so P/{p:.3f} R/{r:.3f}")
+    return ps, rs, accus

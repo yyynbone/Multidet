@@ -256,9 +256,10 @@ class Model(nn.Module):
                     if not self.need_stride and not profile:
                         self.out_det_from = 1
                         out = cls_out.sigmoid() if m.training else cls_out[0]
-                        out_int = torch.where(out > getattr(self, 'class_conf', 0.4),
-                                              torch.ones_like(out), torch.zeros_like(out))  # (n,1)
+
                         if getattr(self, 'train_val_filter', True):
+                            cls_conf  = getattr(self, 'class_conf', 0.4)
+                            out_int = torch.where(out > cls_conf, torch.ones_like(out), torch.zeros_like(out))  # (n,1)
                             # out_bool = out_int.squeeze().bool()  # not squeeze,if n>1, this shape from (n,1) to (n); if n=1, to (), eg: torch.tensor([[1]]) to torch.tensor(1)
                             out_bool = out_int.flatten().bool()
                             x = x[out_bool] # RuntimeError: NYI: Named tensors are not supported with the tracer
@@ -272,7 +273,7 @@ class Model(nn.Module):
                             self.filter_bool = out_bool
                         # modify: (not pred.sigmoid() but pred, a pred_out result of (n,1)
                         # head_out.append((out, out_bool))
-                        head_out.append(cls_out if m.training else (out_int, cls_out[1]))
+                        head_out.append(cls_out if m.training else (out, cls_out[1]))
                 else:
                     x = m(x)
 

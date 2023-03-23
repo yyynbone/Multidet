@@ -55,6 +55,8 @@ def run(data,
         ):
     # if visual_matched:
     #     save_json = True
+    if not isinstance(last_conf, (list, tuple)):
+        last_conf = [last_conf]
     if bgr:
         ch_in = 3
     else:
@@ -94,8 +96,8 @@ def run(data,
     s = ('%20s' + '%11s' * 7) % ('Class', 'Labels', 'R_num', 'P_num', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
     dt, p, r, f1, mp, mr, map50, map = [0.0, 0.0, 0.0], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     loss = torch.zeros(loss_num, device=device)  # mean losses
-    jdict, stats, ap, ap_class = [], [], [], []
-    cls_stats = []
+    jdict, ap, ap_class = [], [], []
+    stats, cls_stats, cls_stats_indet = [], [], []
     div_class_num = 1
     if isinstance(div_area, (list, tuple)):
         div_class_num += len(div_area) + 1
@@ -207,7 +209,7 @@ def run(data,
 
                     # if match_id.shape[0] != box_l.shape[0]:
                     #     print("gt not matched")
-                    visual_match_pred(match_id, pred_b_s_l, box_l, path, save_dir=save_dir, names=names, conf_t=last_conf) #correct is shape of [n, div_area=4, iou=10]
+                    visual_match_pred(match_id, pred_b_s_l, box_l, path, save_dir=save_dir, names=names, conf_ts=last_conf) #correct is shape of [n, div_area=4, iou=10]
 
 
             # Plot images
@@ -221,66 +223,71 @@ def run(data,
                 Thread(target=plot_images, args=(im, plot_pred, paths, f, names), daemon=True).start()
                 # plot_images(im, plot_pred, paths, f, names)
         elif loss_num == 1:
-            out = torch.where(out > last_conf, torch.ones_like(out), torch.zeros_like(out))
             cls_stats.append((out.cpu(), class_label.cpu()))
             if visual_matched:
-                save_object(im ,class_label.cpu(), out.cpu(), paths, save_dir=save_dir)
+                save_object(im ,class_label.cpu(), out.cpu(), paths, save_dir=save_dir, conf_ts=last_conf)
 
         if model.out_det_from == 1:
             out, _ = head_out[0]  # detect out
-
-            cls_stats.append((out.cpu(), class_label.cpu()))
+            cls_stats_indet.append((out.cpu(), class_label.cpu()))
             if visual_matched:
-                save_object(im ,class_label.cpu(), out.cpu(), paths, save_dir=save_dir)
+                save_object(im ,class_label.cpu(), out.cpu(), paths, save_dir=save_dir, conf_ts=(getattr(model, 'class_conf', 0.4)))
 
     # Compute metrics
+    ps, rs, accus = [], [], []
+
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
     cls_stats = [np.concatenate(x, 0) for x in zip(*cls_stats)]  # to numpy
+    cls_stats_indet = [np.concatenate(x, 0) for x in zip(*cls_stats_indet)]  # to numpy
+
     if len(cls_stats):
-        p, r , accu = classify_match(*cls_stats, logger_func=logger.info)
-        if loss_num==1:
-            dt[2] += 0.
-            det_result = (p, r, 0, accu, (loss.cpu() / len(dataloader)).tolist())
-            # Print speeds
-            t = tuple(x / seen * 1E3 for x in dt)  # speeds per image
-            shape = (batch_size, ch_in, imgsz[0], imgsz[1])
-            logger.info(
-                f'all image number is {seen}, which cost {sum(dt)}s\nSpeed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {shape}' % t)
-            return det_result, 0, t
+        ps, rs , accus = classify_match(*cls_stats, conf_ts=last_conf, logger_func=logger.info)
+        dt[2] += 0.
+        det_result = (ps[1], rs[1], 0, accus[0], (loss.cpu() / len(dataloader)).tolist())
+        # Print speeds
+        t = tuple(x / seen * 1E3 for x in dt)  # speeds per image
+        shape = (batch_size, ch_in, imgsz[0], imgsz[1])
+        logger.info(
+            f'all image number is {seen}, which cost {sum(dt)}s\nSpeed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {shape}' % t)
+        return det_result, 0, t
+
+    if len(cls_stats_indet):
+        _, _, _ = classify_match(*cls_stats_indet, conf_ts=(getattr(model, 'class_conf', 0.4)), logger_func=logger.info)
 
     if len(stats) and stats[0].any():
 
-        p, r, ap, ap_class, pred_truth, lev_np, nt = calcu_per_class(*stats, plot=plots, save_dir=save_dir, names=names, conf_t=last_conf)
+        ps, rs, pred_truths, lev_nps, ap, ap_class,  nt = calcu_per_class(*stats, plot=plots, save_dir=save_dir, names=names, conf_ts=last_conf)
         ap50, ap = ap[..., 0], ap.mean(2)  # AP@0.5, AP@0. 5:0.95
+        for li, conf_t in enumerate(last_conf):
+            p, r, pred_truth, lev_np = ps[li], rs[li], pred_truths[li], lev_nps[li]
+            # Print results
+            logger.info(s)
+            pf = '%20s' + '%11i' * 3 + '%11.3g' * 4  # print format
+            all_tp, all_p, all_t = pred_truth[:, 0].sum(), lev_np[:, 0].sum(), nt[:, 0].sum()
 
-        # Print results
-        logger.info(s)
-        pf = '%20s' + '%11i' * 3 + '%11.3g' * 4  # print format
-        all_tp, all_p, all_t = pred_truth[:, 0].sum(), lev_np[:, 0].sum(), nt[:, 0].sum()
+            mp, mr = all_tp / max(all_p, 1e-16), all_tp / max(all_t, 1e-16)
+            map50, map = ap50[:, 0].mean(), ap[:, 0].mean()
+            logger.info(pf % (f'all_conf_{conf_t}', all_t, all_tp, all_p, mp, mr, map50, map))
+            if div_area is not None:
+                f_t, f_tp, f_p = area_filter(nt), area_filter(pred_truth), area_filter(lev_np)
+                f_map50, f_map = area_filter(ap50), area_filter(ap)
+                f_map50 = (f_map50 * f_p).sum()/ max(f_p.sum(), 1e-16)
+                f_map = (f_map * f_p).sum() / max(f_p.sum(), 1e-16)
+                f_t, f_tp, f_p = f_t.sum(), f_tp.sum(), f_p.sum()
+                f_mp, f_mr = f_tp / max(f_p, 1e-16), f_tp / max(f_t, 1e-16)
+                logger.info(pf % (f'all_over_{div_area[0]}', f_t, f_tp, f_p, f_mp, f_mr, f_map50, f_map))
 
-        mp, mr = all_tp / max(all_p, 1e-16), all_tp / max(all_t, 1e-16)
-        map50, map = ap50[:, 0].mean(), ap[:, 0].mean()
-        logger.info(pf % ('all', all_t, all_tp, all_p, mp, mr, map50, map))
-        if div_area is not None:
-            f_t, f_tp, f_p = area_filter(nt), area_filter(pred_truth), area_filter(lev_np)
-            f_map50, f_map = area_filter(ap50), area_filter(ap)
-            f_map50 = (f_map50 * f_p).sum()/ max(f_p.sum(), 1e-16)
-            f_map = (f_map * f_p).sum() / max(f_p.sum(), 1e-16)
-            f_t, f_tp, f_p = f_t.sum(), f_tp.sum(), f_p.sum()
-            f_mp, f_mr = f_tp / max(f_p, 1e-16), f_tp / max(f_t, 1e-16)
-            logger.info(pf % (f'all_over_{div_area[0]}', f_t, f_tp, f_p, f_mp, f_mr, f_map50, f_map))
-
-        # Print results per class
-        if verbose and nc > 1 and len(stats):
-            for i, c in enumerate(ap_class):
-                if c in names:
-                    logger.info(pf % (names[c], nt[i, 0], pred_truth[i, 0], lev_np[i, 0], p[i, 0], r[i, 0], ap50[i, 0], ap[i, 0]))
-                    if isinstance(div_area, (list, tuple)):
-                        for div_i, div_ang in enumerate(div_area):
-                            logger.info(pf % (f'{names[c]}_under_{div_ang}', nt[i, div_i+1], pred_truth[i, div_i+1], lev_np[i, div_i+1], p[i, div_i+1], r[i, div_i+1], ap50[i, div_i+1], ap[i, div_i+1]))
-                        logger.info(pf % (
-                        f'{names[c]}_over_{div_ang}', nt[i, -1], pred_truth[i, -1], lev_np[i, -1],
-                        p[i, -1], r[i, -1], ap50[i, -1], ap[i, -1]))
+            # Print results per class
+            if verbose and nc > 1 and len(stats):
+                for i, c in enumerate(ap_class):
+                    if c in names:
+                        logger.info(pf % (names[c], nt[i, 0], pred_truth[i, 0], lev_np[i, 0], p[i, 0], r[i, 0], ap50[i, 0], ap[i, 0]))
+                        if isinstance(div_area, (list, tuple)):
+                            for div_i, div_ang in enumerate(div_area):
+                                logger.info(pf % (f'{names[c]}_under_{div_ang}', nt[i, div_i+1], pred_truth[i, div_i+1], lev_np[i, div_i+1], p[i, div_i+1], r[i, div_i+1], ap50[i, div_i+1], ap[i, div_i+1]))
+                            logger.info(pf % (
+                            f'{names[c]}_over_{div_ang}', nt[i, -1], pred_truth[i, -1], lev_np[i, -1],
+                            p[i, -1], r[i, -1], ap50[i, -1], ap[i, -1]))
 
     else:
         logger.info('none labels')
@@ -322,28 +329,28 @@ def run(data,
             from pycocotools.cocoeval import COCOeval
 
             anno = COCO(anno_json)  # init annotations api
+            for conf_t in last_conf:
+                pred_json_c = select_score_from_json(pred_json, score_thresh=conf_t)
 
-            pred_json = select_score_from_json(pred_json, score_thresh=last_conf)
+                pred = anno.loadRes(pred_json_c)  # init predictions api
+                eval = COCOeval(anno, pred, 'bbox')
+                if is_coco:
+                    eval.params.imgIds = [int(Path(x).stem) for x in dataloader.dataset.img_files]  # image IDs to evaluate
+                eval.evaluate()
+                eval.accumulate()
+                eval.summarize()
+                map, map50 = eval.stats[:2]  # update results (mAP@0.5:0.95, mAP@0.5)
 
-            pred = anno.loadRes(pred_json)  # init predictions api
-            eval = COCOeval(anno, pred, 'bbox')
-            if is_coco:
-                eval.params.imgIds = [int(Path(x).stem) for x in dataloader.dataset.img_files]  # image IDs to evaluate
-            eval.evaluate()
-            eval.accumulate()
-            eval.summarize()
-            map, map50 = eval.stats[:2]  # update results (mAP@0.5:0.95, mAP@0.5)
+                if visual_matched:
+                    with open(data[opt.task], 'r') as f:
+                        img0 = f.readline()
+                    img_prefix = os.path.split(img0)[0]
+                    print_log(
+                        f"##########################\nnow we collect and visual result with iou thresh of "
+                        f"0.5 and conf thresh of {conf_t}", logger=logger)
 
-            if visual_matched:
-                with open(data[opt.task], 'r') as f:
-                    img0 = f.readline()
-                img_prefix = os.path.split(img0)[0]
-                print_log(
-                    f"##########################\nnow we collect and visual result with iou thresh of "
-                    f"0.5 and conf thresh of {last_conf}", logger=logger)
-
-                visual_return(eval, anno, save_dir, img_prefix, class_area=None, score_thresh=last_conf,
-                              logger=logger)
+                    visual_return(eval, anno, save_dir, img_prefix, class_area=None, score_thresh=conf_t,
+                                  logger=logger)
 
         except Exception as e:
             logger.info(f'pycocotools unable to run: {e}')
@@ -412,8 +419,6 @@ def main(opt):
     else:
         weight_list.append(opt.weights)
 
-    last_conf_list = opt.last_conf
-
     for opt.weights in weight_list:
         opt.device = select_device(opt.device, batch_size=opt.batch_size)
         # Directories
@@ -469,16 +474,14 @@ def main(opt):
                       collate_fn=LoadImagesAndLabels.collate_fn)
 
         # run normally
-        for last_conf in last_conf_list:
-            opt.logger.info(f'now we thresh the conf of {last_conf}')
-            opt.last_conf = last_conf
-            results, maps,times = run(**vars(opt))
-            msg = 'Loss({loss})\n' \
-                  'Detect: P({p:.3f})  R({r:.3f})  mAP@0.5({map50:.3f})  mAP@0.5:0.95({map:.3f})\n' \
-                  'Time: inference({t_inf:.4f}ms/frame)  nms({t_nms:.4f}ms/frame)'.format(
-                loss=results[-1], p=results[0], r=results[1], map50=results[2], map=results[3],
-                t_inf=times[1], t_nms=times[2])
-            opt.logger.info(msg)
+
+        results, maps,times = run(**vars(opt))
+        msg = 'Loss({loss})\n' \
+              'Detect: P({p:.3f})  R({r:.3f})  mAP@0.5({map50:.3f})  mAP@0.5:0.95({map:.3f})\n' \
+              'Time: inference({t_inf:.4f}ms/frame)  nms({t_nms:.4f}ms/frame)'.format(
+            loss=results[-1], p=results[0], r=results[1], map50=results[2], map=results[3],
+            t_inf=times[1], t_nms=times[2])
+        opt.logger.info(msg)
     print('validate done')
     torch.cuda.empty_cache()
 

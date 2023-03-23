@@ -560,7 +560,7 @@ def output_to_target(output):
     return np.array(targets)
 
 
-def visual_match_pred(match_id, pred, target, img_path, save_dir='.', names=(),conf_t=0.1):
+def visual_match_pred(match_id, pred, target, img_path, save_dir='.', names=(),conf_ts=0.1):
     """
     visualize the pred box and gt box via the rectangle matched
     :param match_id:array (n,2), n is gtbox number, ((gt_id, pred_id),...)
@@ -569,84 +569,92 @@ def visual_match_pred(match_id, pred, target, img_path, save_dir='.', names=(),c
     :param img_path:  one image path
     :param save_dir: saved dir of the result, and under the dir, ./visual_images/matched which saved the matched visual images
     :param names: list,  class names
-    :param conf_t: conf thresh
+    :param conf_ts: conf thresh
     :return:
     """
-    img_name = os.path.split(img_path)[-1]
-    # if not isinstance(img_path, str):
-    #     img_path = str(img_path)
-    # Sort by objectness
-    p_ids = np.where(pred[:, 4]>=conf_t)[0].tolist() #(array([],)[0] to list
+    if not isinstance(conf_ts, (list, tuple)):
+        conf_ts = [conf_ts]
+    for conf_t in conf_ts:
+        img_name = os.path.split(img_path)[-1]
+        # if not isinstance(img_path, str):
+        #     img_path = str(img_path)
+        # Sort by objectness
+        p_ids = np.where(pred[:, 4]>=conf_t)[0].tolist() #(array([],)[0] to list
 
-    gt_result = np.zeros((target.shape[0],target.shape[1]+1))
-    gt_result[:, :-1] = target
+        gt_result = np.zeros((target.shape[0],target.shape[1]+1))
+        gt_result[:, :-1] = target
 
-    bbox_result = np.zeros((len(p_ids), pred.shape[1]+1))
-    bbox_result[:, :-1] = pred[p_ids]
+        bbox_result = np.zeros((len(p_ids), pred.shape[1]+1))
+        bbox_result[:, :-1] = pred[p_ids]
 
-    conf_filter_matched = []
-    for pe, p_id in enumerate(match_id[:, 1]):
-        if p_id in p_ids:
-             conf_filter_matched.append(pe)
+        conf_filter_matched = []
+        for pe, p_id in enumerate(match_id[:, 1]):
+            if p_id in p_ids:
+                 conf_filter_matched.append(pe)
 
-    conf_filter_matched_id = match_id[conf_filter_matched]
-    gm = conf_filter_matched_id.shape[0]
-    gt_result[conf_filter_matched_id[:, 0], -1] = 1
-    bbox_result[conf_filter_matched_id[:, 1], -1] = 1
+        conf_filter_matched_id = match_id[conf_filter_matched]
+        gm = conf_filter_matched_id.shape[0]
+        gt_result[conf_filter_matched_id[:, 0], -1] = 1
+        bbox_result[conf_filter_matched_id[:, 1], -1] = 1
 
-    if gm!=gt_result.shape[0]:
-        is_igmatch = 'not_matched'
-    elif gm!=bbox_result.shape[0]:
-        is_igmatch = 'false_pred'
-    else:
-        is_igmatch = 'matched'
+        if gm!=gt_result.shape[0]:
+            is_igmatch = 'not_matched'
+        elif gm!=bbox_result.shape[0]:
+            is_igmatch = 'false_pred'
+        else:
+            is_igmatch = 'matched'
 
-    save_path = os.path.join(save_dir,  'visual_images', is_igmatch)
-    mkdir(save_path)
+        save_path = os.path.join(save_dir, f'conf{conf_t}',  'visual_images', is_igmatch)
+        mkdir(save_path)
 
-    outfile = os.path.join(save_path, img_name)
-    im = cv2.imread(str(img_path))  # BGR
-    Thread(target=visual_images, args=(im, gt_result, bbox_result, img_path, outfile, names),
-           daemon=True).start()
+        outfile = os.path.join(save_path, img_name)
+        im = cv2.imread(str(img_path))  # BGR
+        Thread(target=visual_images, args=(im, gt_result, bbox_result, img_path, outfile, names),
+               daemon=True).start()
 
-def save_object(ims, targets, preds, paths=None, save_dir='exp', visual_task=0):
+def save_object(ims, targets, preds_float, paths=None, save_dir='exp', visual_task=0, conf_ts=0.4):
 
     """
     Plot image grid with labels and pred
     :param im: numpy array of image
     :param target: cls label  (bs, 1)
-    :param pred: (bs,1)
+    :param preds_float: (bs,1)
     :param paths: image paths
     :return:
     """
-    save_dir  = os.path.join(save_dir, 'filter_false')
-    mkdir(save_dir)
     if isinstance(ims, torch.Tensor):
         ims = ims.cpu().permute(0, 2, 3, 1).float().numpy()  # bs, _, h, w to bs, h,w, _
     if isinstance(targets, torch.Tensor):
         targets = targets.cpu().numpy()
-    if isinstance(preds, torch.Tensor):
-        preds = preds.cpu().numpy()
+    if isinstance(preds_float, torch.Tensor):
+        preds_float = preds_float.cpu().numpy()
     if np.max(ims[0]) <= 1:
         ims *= 255  # de-normalise (optional)
-    i_l = np.arange(0, len(ims)).reshape(-1,1)[preds!=targets]
-    visual_idx = np.logical_or(preds[i_l]==1, targets[i_l]==1) if visual_task==2 else (preds if visual_task else targets)[i_l]==1
-    i_l = i_l.reshape(-1,1)[visual_idx].flatten().tolist()
-    pred_flag = [ 'pred_bg' , 'pred_object']
-    for i in i_l:
-        im = ims[i].astype(np.uint8)
-        target = targets[i]
-        pred = preds[i]
-        path = paths[i]
-        h, w, _ = im.shape  # height, width, channal
-        # img = np.full((int(h), int(w), 1), 255, dtype=np.uint8)  # init
-        # Annotate
-        fs = int((h + w) * 0.01)  # font size
-        annotator = Annotator(im.repeat(3, axis=2), line_width=round(fs / 10), font_size=fs, pil=True)
 
-        for i, box_c in enumerate([target, pred]):
-            x, y = i*int(w), 0  # block origin
-            annotator.rectangle([x, y, x + w, y + h], None, (255, 255, 255), width=2)  # borders
-            if path:
-                annotator.text((x + 5, y - 5 + h), text=Path(path).name[:40].replace(":", "_")+pred_flag[int(pred)], txt_color=(220, 220, 220))  # filenames
-        annotator.im.save(os.path.join(save_dir, Path(path).name))  # save
+    if not isinstance(conf_ts, (list, tuple)):
+        conf_ts = [conf_ts]
+    for conf_t in conf_ts:
+        save_dir  = os.path.join(save_dir,  f'conf{conf_t}', 'filter_false')
+        mkdir(save_dir)
+        preds = np.where(preds_float > conf_t, 1, 0)
+        i_l = np.arange(0, len(ims)).reshape(-1,1)[preds!=targets]
+        visual_idx = np.logical_or(preds[i_l]==1, targets[i_l]==1) if visual_task==2 else (preds if visual_task else targets)[i_l]==1
+        i_l = i_l.reshape(-1,1)[visual_idx].flatten().tolist()
+        pred_flag = [ 'pred_bg' , 'pred_object']
+        for i in i_l:
+            im = ims[i].astype(np.uint8)
+            target = targets[i]
+            pred = preds[i]
+            path = paths[i]
+            h, w, _ = im.shape  # height, width, channal
+            # img = np.full((int(h), int(w), 1), 255, dtype=np.uint8)  # init
+            # Annotate
+            fs = int((h + w) * 0.01)  # font size
+            annotator = Annotator(im.repeat(3, axis=2), line_width=round(fs / 10), font_size=fs, pil=True)
+
+            for i, box_c in enumerate([target, pred]):
+                x, y = i*int(w), 0  # block origin
+                annotator.rectangle([x, y, x + w, y + h], None, (255, 255, 255), width=2)  # borders
+                if path:
+                    annotator.text((x + 5, y - 5 + h), text=Path(path).name[:40].replace(":", "_")+pred_flag[int(pred)], txt_color=(220, 220, 220))  # filenames
+            annotator.im.save(os.path.join(save_dir, Path(path).name))  # save

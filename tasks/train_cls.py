@@ -21,7 +21,7 @@ from models  import (attempt_load, Model)
 from dataloader import check_anchors, check_train_batch_size, LoadImagesAndLabels, InfiniteDataLoader
 from loss import *
 from utils import (check_dataset, check_file, check_suffix, check_yaml, colorstr, cal_flops, get_latest_run,
-                   increment_path, init_seeds, intersect_dicts, labels_to_class_weights, one_cycle, step,
+                   increment_path, init_seeds, intersect_dicts, labels_to_class_weights, one_cycle, step, linear,
                    soft_cos_log, print_args,  strip_optimizer,set_logging, Callback, plot_results, EarlyStopping,
                    ModelEMA, time_sync,de_parallel, torch_distributed_zero_first, LossSaddle, select_device,
                    select_class_tuple, save_object, classify_match)
@@ -696,11 +696,15 @@ def train(hyp, opt, logger, device, Local_rank=-1, Node=-1, World_size=1):
                             best_fitness = fi
                             torch.save(ckpt, best)
                             logger.info(f'best epoch saved in Epoch {epoch}')
-                        re_fi = (precision_fi + recall_fi) /2
-                        if re_fi > best_r and precision_fi > 0.6:
-                            best_r = re_fi
-                            torch.save(ckpt, best_rt)
-                            logger.info(f'best recall epoch saved in Epoch {epoch}')
+                        if recall_fi > 0.9 and precision_fi > 0.5 :
+                            torch.save(ckpt, w / f'epoch{epoch}.pt')
+                            logger.info(f'a better recall epoch saved in Epoch {epoch}')
+                        if recall_fi>0.8:
+                            re_fi = precision_fi + (1.5-0.8)/(1-0.8**2)*recall_fi
+                            if re_fi > best_r :
+                                best_r = re_fi
+                                torch.save(ckpt, best_rt)
+                                logger.info(f'best recall epoch saved in Epoch {epoch}')
                         pr_fi = 2.8 * precision_fi * recall_fi / np.maximum(1.8 * precision_fi + recall_fi, 1e-20)
 
                         if pr_fi > best_p and recall_fi > 0.6:
