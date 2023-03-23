@@ -125,29 +125,32 @@ def cross_entropy(pred,
     loss = reduce_loss(loss, reduction)
     return loss
 
-# def binary_cross_entropy(pred,
-#                   label,
-#                   reduction='mean',
-#                   class_weight=None,
-#                   **kwargs):
-#     # bce中含有class_weight 和pos_weight, 其中class_weight用于多标签的weight,如一个label为[1,0,3], pred为[0.9,0.2,1.8] class_weight也必须为shape(3)
-#     loss = nn.functional.binary_cross_entropy_with_logits(
-#             pred,
-#             label,
-#             # class_weight,
-#             # pos_weight=class_weight[1],
-#             pos_weight=class_weight[1]  if class_weight is not None else torch.tensor([1], device=pred.device),
-#             reduction='none')
-#     loss = reduce_loss(loss, reduction)
-#     return loss
-
 def binary_cross_entropy(pred,
                   label,
                   reduction='mean',
                   class_weight=None,
                   pos_weight=None,
+                  loss_style=0,
                   **kwargs):
-    # bce中含有class_weight 和pos_weight, 其中class_weight用于多标签的weight,如一个label为[1,0,3], pred为[0.9,0.2,1.8] class_weight也必须为shape(3)
+    """
+    difference in loss_style, the result is loss.mean():
+        none:  pos 1, 10 ,100 (0.74, 2.2, 164.8) to (0.70, 2.88, 243.7)
+               if this, when pos_weight gain, although the same pred, but loss decrease, so we modifed to neg_pos_weight
+        neg_pos_weight: pos 1, 10 ,100 (0.74, 0.40, 0.33) to (0.69, 0.52,0.49)
+        pos_sample_aug: pos 1, 10 ,100 (0.74, 0.55, 0.49) to (0.7, 0.52, 0.487)
+                        why? because if label 0, pred 0.1, after sigmoid, pred is 0.525, so loss is 0.74;
+                        but if label 1., pred 0.5, after sigmoid, pred is 0.6225, , so loss is 0.474
+                        changed  sharply, if pos label increase, the divident become bigger
+    :param pred:
+    :param label:
+    :param reduction:  mean, None, sum
+    :param class_weight: multi_class weight for labels, eg: all category is 4 (0 to 3),class_weight.shape=4,
+        if class_weight=[0.1, 0.1, 0.6,0.2], one label of image if [1, 1, 0, 1], pred=[0.9, 0.2, 0.1,0.8], loss = class_weight * norm(pred-label)
+    :param pos_weight:
+    :param loss_style: loss calculate style, [0, 1, 2] denote [others,'neg_pos_weight', 'pos_sample_aug']
+    :param kwargs:
+    :return:
+    """
     if pos_weight is  None:
         pos_weight = torch.tensor([1.], device=pred.device)
     loss = nn.functional.binary_cross_entropy_with_logits(
@@ -156,15 +159,12 @@ def binary_cross_entropy(pred,
             class_weight,
             pos_weight=pos_weight,
             reduction='none')
-    # # if this, when pos_weight gain, although the same pred, but loss decrease, so we modifed
-    # loss = 2 * loss.mean()/(1+pos_weight) # pos 1, 10 ,100 (0.74, 0.40, 0.33) to (0.69, 0.52,0.49)
-    # loss = reduce_loss(loss, reduction)   # pos 1, 10 ,100 (0.74, 2.2, 164.8) to (0.70, 2.88, 243.7)
-    # ft_num = label.shape[0] - label.sum()
-    # tt_num = label.sum()
-    # print(loss)
-    # pos 1, 10 ,100 (0.74, 0.55, 0.49) to (0.7, 0.52, 0.487) why? because if label 0, pred 0.1, after sigmoid, pred is 0.525, so loss is 0.74;
-    # but if label 1., pred 0.5, after sigmoid, pred is 0.6225, , so loss is 0.474
-    loss = loss.sum()/(label.shape[0] + (pos_weight-1)*label.sum())   #changed  sharply, if pos label increase, the divident become bigger
+
+    if loss_style == 1:
+        loss = 2 * loss / (1 + pos_weight)
+    elif loss_style == 2:
+        loss = loss * label.shape[0] / (label.shape[0] + (pos_weight - 1) * label.sum())
+    loss = reduce_loss(loss, reduction)
     return loss
 class CrossEntropyLoss(nn.Module):
     def __init__(self,

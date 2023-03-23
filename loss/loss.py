@@ -273,7 +273,7 @@ class ClassifyLoss():
         else:
             self.label_pos_weight = self.pos_weight
         # print(self.pos_weight, self.label_pos_weight)
-        cls_ls = self.loss(preds, class_label, pos_weight=self.pos_gain * torch.tensor([self.label_pos_weight], device=self.device))
+        cls_ls = self.loss(preds, class_label, pos_weight=self.pos_gain * torch.tensor([self.label_pos_weight], device=self.device), loss_style=1)
         return cls_ls*len(preds), cls_ls.detach()
 
 
