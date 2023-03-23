@@ -286,7 +286,7 @@ def train(hyp, opt, logger, device, Local_rank=-1, Node=-1, World_size=1):
     train_loader = loader(train_dataset,
                     batch_size=batch_size,
                     shuffle=shuffle and sampler is None,
-                    num_workers=4,
+                    num_workers=workers,
                     sampler=sampler,
                     pin_memory=True,
                     collate_fn=LoadImagesAndLabels.collate_fn4 if opt.quad else LoadImagesAndLabels.collate_fn)
@@ -323,7 +323,7 @@ def train(hyp, opt, logger, device, Local_rank=-1, Node=-1, World_size=1):
         val_loader = DataLoader(val_dataset,
                                 batch_size=batch_size,
                                 shuffle=False,
-                                num_workers=4,
+                                num_workers=workers,
                                 sampler=None,
                                 pin_memory=True,
                                 collate_fn=LoadImagesAndLabels.collate_fn)
@@ -366,7 +366,7 @@ def train(hyp, opt, logger, device, Local_rank=-1, Node=-1, World_size=1):
 
     compute_loss = eval(opt.loss)(model,logger=logger)  # init loss class
     loss_num = compute_loss.loss_num
-    pos_schedule = linear(hyp.get('lr_start_pos_weight', 0), hyp.get('max_pos_weight', 10), epochs)
+    pos_schedule = eval(hyp.get("pos_schedule", "linear"))(hyp.get('lr_start_pos_weight', 0), hyp.get('max_pos_weight', 10), epochs)
 
     logger.info(f'Image sizes {imgsz} train, {imgsz} val\n'
                 f'now with size of {imgsz}, {fs:.2f} GFLOPS\n'
@@ -414,7 +414,7 @@ def train(hyp, opt, logger, device, Local_rank=-1, Node=-1, World_size=1):
                 # if compute_loss.pos_weight is None:
                 #     ft_num = targets[0].shape[0] - targets[0].sum()
                 #     label_pos_weight = torch.tensor([ft_num / max(targets[0].sum(), 1)])
-                epoch_pos_w = pos_schedule(epoch)
+                epoch_pos_w = round(pos_schedule(epoch), 2)
                 if epoch_pos_w > compute_loss.label_pos_weight:
                     compute_loss.pos_weight = torch.tensor([epoch_pos_w])
                 logger.info(f'now epoch_pos_w is {epoch_pos_w}, ClassifyLoss label_pos_weight is {compute_loss.label_pos_weight}, ClassifyLoss pos_weight is {compute_loss.pos_weight}')
@@ -930,7 +930,7 @@ if __name__ == "__main__":
     opt = parse_opt()
     # main(opt)
     gpus = torch.cuda.device_count()
-    opt.workers = int(opt.workers /4)
+    # opt.workers = int(opt.workers /4)
     opt.batch_size = int(opt.batch_size*opt.world_size)
     # print(opt.batch_size) 384
     if opt.world_size==1:

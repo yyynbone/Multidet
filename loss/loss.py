@@ -269,7 +269,7 @@ class ClassifyLoss():
             class_label = targets
         if self.pos_weight is None:
             ft_num = class_label.shape[0] - class_label.sum().item()   #int(tensor) or tensor.item() if tensor is a constant int
-            self.label_pos_weight = ft_num // max(class_label.sum().item(), 1)  # torch.div(ft_num, max(class_label.sum(), 1))
+            self.label_pos_weight = round(ft_num / max(class_label.sum().item(), 1), 2)  # torch.div(ft_num, max(class_label.sum(), 1))
         else:
             self.label_pos_weight = self.pos_weight
         # print(self.pos_weight, self.label_pos_weight)
