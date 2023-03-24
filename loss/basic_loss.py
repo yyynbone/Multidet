@@ -166,10 +166,61 @@ def binary_cross_entropy(pred,
         loss = loss * label.shape[0] / (label.shape[0] + (pos_weight - 1) * label.sum())
     loss = reduce_loss(loss, reduction)
     return loss
+
+def focal_binary_cross_entropy(pred,
+                  label,
+                  reduction='mean',
+                  class_weight=None,
+                  pos_weight=None,
+                  gamma=2.0,
+                  loss_style=0,
+                  **kwargs):
+    """
+    focals more on the pred which is bias to the label
+        > pred_sigmoid  = torch.tensor([[0.5],[0.1],[0.3], [0.7],[0.1],[0.7]])
+          label = torch.tensor([[1.], [1.], [0], [0.], [0.], [0]])
+          pt; absolute bias compaired with label, abs(label-pred): torch.tensor([[0.5],[0.9],[0.3], [0.7],[0.1],[0.7]])
+          focal_weight  tensor([[0.0625],[0.2025],[0.0675],[0.3675],[0.0075],[0.3675]])
+
+    :param pred:
+    :param label:
+    :param gamma: exponentiation of power function of pred bias
+    :param reduction:  mean, None, sum
+    :param class_weight: multi_class weight for labels, eg: all category is 4 (0 to 3),class_weight.shape=4,
+        if class_weight=[0.1, 0.1, 0.6,0.2], one label of image if [1, 1, 0, 1], pred=[0.9, 0.2, 0.1,0.8], loss = class_weight * norm(pred-label)
+    :param pos_weight:
+    :param loss_style: loss calculate style, [0, 1, 2] denote [others,'neg_pos_weight', 'pos_sample_aug']
+    :param kwargs:
+    :return:
+    """
+    if pos_weight is  None:
+        pos_weight = torch.tensor([1.], device=pred.device)
+    pred_sigmoid = pred.sigmoid()
+    pt = (1 - pred_sigmoid) * label + pred_sigmoid * (1 - label)
+    # bias we focals on positive sample, if alpha=0.1, we focals more on positive, and if alpha=0.5, we focal equally, same as pos_weight
+    alpha = pos_weight/ (1+pos_weight)
+    focal_weight = (alpha * label + (1 - alpha) *
+                    (1 - label)) * pt.pow(gamma)
+
+    # binary_cross_entropy has no pos_weight
+    loss = nn.functional.binary_cross_entropy(
+            pred_sigmoid,
+            label,
+            class_weight,
+            reduction='none')
+    loss = loss * focal_weight
+    if loss_style == 1:
+        loss = 2 * loss / (1 + pos_weight)
+    elif loss_style == 2:
+        loss = loss * label.shape[0] / (label.shape[0] + (pos_weight - 1) * label.sum())
+    loss = reduce_loss(loss, reduction)
+    return loss
+
 class CrossEntropyLoss(nn.Module):
     def __init__(self,
                  use_sigmoid=False,
                  # use_mask=False,
+                 use_focal=False,
                  reduction='mean',
                  class_weight=None,
                  ignore_index=None,
@@ -199,11 +250,15 @@ class CrossEntropyLoss(nn.Module):
         self.ignore_index = ignore_index
 
         if self.use_sigmoid:
-            self.cls_criterion = binary_cross_entropy
+            if use_focal:
+                self.cls_criterion = focal_binary_cross_entropy
+            else:
+                self.cls_criterion = binary_cross_entropy
         # elif self.use_mask:
         #     self.cls_criterion = mask_cross_entropy
         else:
             self.cls_criterion = cross_entropy
+        print("now we use loss:", self.cls_criterion)
 
     def forward(self,
                 cls_score,

@@ -184,6 +184,19 @@ class LoadImagesAndLabels(Dataset):
             assert self.img_files, f'{prefix}No images found'
         except Exception as e:
             raise Exception(f'{prefix}Error loading data from {path}: {e}\n')
+
+        self.img_files = sorted(self.img_files, key=lambda x:x[-5:])
+        # select sample randomly
+        if hyp is not None:
+            if 'train' in prefix:
+                portion = hyp.get('train_sample_portion', 1)
+            elif 'val' in prefix:
+                portion = hyp.get('val_sample_portion', 1)
+            else:
+                portion = 1
+            select_num  = int(len(self.img_files) * portion)
+            self.img_files = self.img_files[:select_num]
+
         # select image data which contains filter_str
         if filter_str:
             self.img_files = [im_f for im_f in self.img_files if filter_str in im_f]
@@ -452,7 +465,6 @@ class LoadImagesAndLabels(Dataset):
         col_target = (torch.cat(class_label, 0), torch.cat(label4, 0), torch.cat(seg, 0))
         return torch.stack(img4, 0), col_target, path4, shapes4
 
-
 class LoadStreams:
     # streamloader, i.e. `python detect.py --source 'rtsp://example.com/media.mp4'  # RTSP, RTMP, HTTP streams`
     def __init__(self, logger=None, sources='streams.txt', img_size=640, stride=32, auto=True):
@@ -540,4 +552,3 @@ class LoadStreams:
 
     def __len__(self):
         return len(self.sources)  # 1E12 frames = 32 streams at 30 FPS for 30 years
-

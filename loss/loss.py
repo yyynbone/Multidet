@@ -250,16 +250,19 @@ class LossV8:
         return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
 
 class ClassifyLoss():
-    def __init__(self,model, use_BCE=True, logger=None):
-        self.use_BCE = use_BCE
-        self.device = next(model.parameters()).device  # get model device
+    def __init__(self,model, logger=None):
+        use_BCE = model.hyp.get('use_BCE', True)
+        use_focal = model.hyp.get('use_focal', False)
         class_weight = model.hyp.get('cls_weight', None)
+
+        self.device = next(model.parameters()).device  # get model device
         self.pos_weight = model.hyp.get('pos_weight', None)
         self.pos_gain = model.hyp.get('pos_gain', 1)
         logger.info(f'ClassifyLoss bg_obj_weight is {self.pos_weight}')
-        self.loss = CrossEntropyLoss(use_sigmoid=use_BCE, class_weight=class_weight).to(self.device)
+        self.loss = CrossEntropyLoss(use_sigmoid=use_BCE, use_focal=use_focal, class_weight=class_weight).to(self.device)
         self.loss_num = 1
         self.label_pos_weight = model.hyp.get('max_pos_weight', 10)
+        self.loss_style = model.hyp.get('loss_style', 1)
 
 
     def __call__(self, preds, targets):
@@ -273,7 +276,7 @@ class ClassifyLoss():
         else:
             self.label_pos_weight = self.pos_weight
         # print(self.pos_weight, self.label_pos_weight)
-        cls_ls = self.loss(preds, class_label, pos_weight=self.pos_gain * torch.tensor([self.label_pos_weight], device=self.device), loss_style=1)
+        cls_ls = self.loss(preds, class_label, pos_weight=self.pos_gain * torch.tensor([self.label_pos_weight], device=self.device), loss_style=self.loss_style)
         return cls_ls*len(preds), cls_ls.detach()
 
 

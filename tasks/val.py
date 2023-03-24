@@ -51,6 +51,7 @@ def run(data,
         class_map=list(range(1, 81)), # class_map save to json, so categoryid from 1.
         visual_matched=False,
         logger=None,
+        task='val',
         **kwargs
         ):
     # if visual_matched:
@@ -307,7 +308,7 @@ def run(data,
     if save_json and len(jdict):
         w = Path(weights[0] if isinstance(weights, list) else weights).stem if weights is not None else ''  # weights
         # anno_json = str(Path(data.get('path', '../coco')) / 'annotations/instances_val2017.json')  # annotations json
-        anno_json = str(Path(data.get('path', '../coco')) / f'COCO/annotation/{opt.task}.json')  # annotations json
+        anno_json = str(Path(data.get('path', '../coco')) / f'COCO/annotation/{task}.json')  # annotations json
         pred_json = str(save_dir / f"{w}_predictions.json")  # predictions json
         logger.info(f'\nEvaluating pycocotools mAP... saving {pred_json}...')
 
@@ -342,7 +343,7 @@ def run(data,
                 map, map50 = eval.stats[:2]  # update results (mAP@0.5:0.95, mAP@0.5)
 
                 if visual_matched:
-                    with open(data[opt.task], 'r') as f:
+                    with open(data[task], 'r') as f:
                         img0 = f.readline()
                     img_prefix = os.path.split(img0)[0]
                     print_log(
@@ -397,6 +398,7 @@ def parse_opt():
     parser.add_argument('--ignore-bkg', action='store_true', help='filter and image of background')
     parser.add_argument('--loss-num', type=int, default=3, help='loss num of class , detect or seg')
     parser.add_argument('--train-val-filter', action='store_true', help='filter first use the classify head')
+    parser.add_argument('--val-train', action='store_true', help='valuate the train dataset')
     opt = parser.parse_args()
     opt.data = check_yaml(opt.data)  # check YAML
     opt.save_json |= opt.data.endswith('coco.yaml')
@@ -454,35 +456,42 @@ def main(opt):
                 opt.compute_loss = eval(opt.compute_loss)(opt.model, logger=opt.logger)
 
 
-        opt.task = opt.task if opt.task in ('train', 'val', 'test') else 'val'  # path to train/val/test images
-        dataset = LoadImagesAndLabels(opt.data[opt.task], opt.imgsz, opt.batch_size, opt.logger,
-                                      hyp=opt.model.hyp,  # hyperparameters
-                                      stride=int(stride),
-                                      pad=.0,
-                                      prefix=f'{opt.task}: ',
-                                      is_bgr=opt.bgr,
-                                      filter_str=opt.filter_str,
-                                      filter_bkg=opt.ignore_bkg,
-                                      select_class=select_class_tuple(opt.data))
-        batch_size = min(opt.batch_size, len(dataset))
-        opt.dataloader = DataLoader(dataset,
-                      batch_size=batch_size,
-                      shuffle=False,
-                      num_workers=4,
-                      sampler=None,
-                      pin_memory=True,
-                      collate_fn=LoadImagesAndLabels.collate_fn)
+        task = opt.task if opt.task in ('train', 'val', 'test') else 'val'  # path to train/val/test images
+        if opt.val_train and task != 'train':
+            tasks = (task, 'train')
+        else:
+            tasks = (task)
+        for opt.task in tasks:
+            dataset = LoadImagesAndLabels(opt.data[opt.task], opt.imgsz, opt.batch_size, opt.logger,
+                                          hyp=opt.model.hyp,  # hyperparameters
+                                          stride=int(stride),
+                                          pad=.0,
+                                          prefix=f'{opt.task}: ',
+                                          is_bgr=opt.bgr,
+                                          filter_str=opt.filter_str,
+                                          filter_bkg=opt.ignore_bkg,
+                                          select_class=select_class_tuple(opt.data))
+            batch_size = min(opt.batch_size, len(dataset))
+            opt.dataloader = DataLoader(dataset,
+                          batch_size=batch_size,
+                          shuffle=False,
+                          num_workers=4,
+                          sampler=None,
+                          pin_memory=True,
+                          collate_fn=LoadImagesAndLabels.collate_fn)
 
-        # run normally
+            # run normally
 
-        results, maps,times = run(**vars(opt))
-        msg = 'Loss({loss})\n' \
-              'Detect: P({p:.3f})  R({r:.3f})  mAP@0.5({map50:.3f})  mAP@0.5:0.95({map:.3f})\n' \
-              'Time: inference({t_inf:.4f}ms/frame)  nms({t_nms:.4f}ms/frame)'.format(
-            loss=results[-1], p=results[0], r=results[1], map50=results[2], map=results[3],
-            t_inf=times[1], t_nms=times[2])
-        opt.logger.info(msg)
+            results, maps,times = run(**vars(opt))
+            msg = 'task{task}:   Loss({loss})\n' \
+                  'Detect: P({p:.3f})  R({r:.3f})  mAP@0.5({map50:.3f})  mAP@0.5:0.95({map:.3f})\n' \
+                  'Time: inference({t_inf:.4f}ms/frame)  nms({t_nms:.4f}ms/frame)'.format(
+                task=opt.task, loss=results[-1],
+                p=results[0], r=results[1], map50=results[2], map=results[3],
+                t_inf=times[1], t_nms=times[2])
+            opt.logger.info(msg)
     print('validate done')
+
     torch.cuda.empty_cache()
 
 

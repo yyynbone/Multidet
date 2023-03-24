@@ -40,3 +40,11 @@ label_smoothing: 0.1   # cp:cn = 1-0.5*0.1, 0.5*0.1
 # pos_weight: 10  # if None use self_label_weight
 pos_gain: 1 # pos_weight = pos_weight * pos_gain
 max_pos_weight: 10 # max pos linear schedule from 0 to epochs
+use_BCE: True
+use_focal: True
+loss_style: 2  # loss calculate style, [0, 1, 2] denote [others,'neg_pos_weight', 'pos_sample_aug']
+pos_schedule: linear  # step or linear , step always with neg_pos_weight , linear with pos_sample_aug
+
+# random select sample
+train_sample_portion: 1
+val_sample_portion: 1

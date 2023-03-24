@@ -368,6 +368,7 @@ def train(hyp, opt, logger, device, Local_rank=-1, Node=-1, World_size=1):
     loss_num = compute_loss.loss_num
     pos_schedule = eval(hyp.get("pos_schedule", "linear"))(hyp.get('lr_start_pos_weight', 0), hyp.get('max_pos_weight', 10), epochs)
 
+    logger.info(f'out_saddle is {out_saddle}\n stopper is {stopper} \n compute_loss is {compute_loss} \n pos_schedule is {pos_schedule}')
     logger.info(f'Image sizes {imgsz} train, {imgsz} val\n'
                 f'now with size of {imgsz}, {fs:.2f} GFLOPS\n'
                 f'Using {train_loader.num_workers * World_size} dataloader workers\n'
