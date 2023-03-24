@@ -197,18 +197,29 @@ def focal_binary_cross_entropy(pred,
         pos_weight = torch.tensor([1.], device=pred.device)
     pred_sigmoid = pred.sigmoid()
     pt = (1 - pred_sigmoid) * label + pred_sigmoid * (1 - label)
-    # bias we focals on positive sample, if alpha=0.1, we focals more on positive, and if alpha=0.5, we focal equally, same as pos_weight
-    alpha = pos_weight/ (1+pos_weight)
-    focal_weight = (alpha * label + (1 - alpha) *
-                    (1 - label)) * pt.pow(gamma)
+    # # bias we focals on positive sample, if alpha=0.1, we focals more on positive, and if alpha=0.5, we focal equally, same as pos_weight
+    # alpha = pos_weight/ (1+pos_weight)
+    # focal_weight = (alpha * label + (1 - alpha) *
+    #                 (1 - label)) * pt.pow(gamma)
+    #
+    # # binary_cross_entropy has no pos_weight
+    # loss = nn.functional.binary_cross_entropy(
+    #         pred_sigmoid,
+    #         label,
+    #         class_weight,
+    #         reduction='none')
+    # loss = loss * focal_weight
 
+    focal_weight = pt.pow(gamma)
     # binary_cross_entropy has no pos_weight
-    loss = nn.functional.binary_cross_entropy(
-            pred_sigmoid,
+    loss = nn.functional.binary_cross_entropy_with_logits(
+            pred,
             label,
             class_weight,
+            pos_weight=pos_weight,
             reduction='none')
     loss = loss * focal_weight
+
     if loss_style == 1:
         loss = 2 * loss / (1 + pos_weight)
     elif loss_style == 2:
@@ -258,7 +269,7 @@ class CrossEntropyLoss(nn.Module):
         #     self.cls_criterion = mask_cross_entropy
         else:
             self.cls_criterion = cross_entropy
-        print("now we use loss:", self.cls_criterion)
+        # print("now we use loss:", self.cls_criterion)
 
     def forward(self,
                 cls_score,
