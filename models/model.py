@@ -19,7 +19,7 @@ except ImportError:
     thop = False
 
 det_head = (Detect, YOLOv8Detect, IDetect)
-cls_head = (Classify, YOLOv8Classify, SqueezenetClassify)
+cls_head = (Classify, YOLOv8Classify, SqueezenetClassify, ObjClassify)
 def parse_model(d, ch_in, logger=LOGGER):  # model_dict, input_channels(3)
     logger.info(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}")
     anchors, nc, gd, gw = d.get('anchors', []), d['nc'], d['depth_multiple'], d['width_multiple']
@@ -388,7 +388,7 @@ if __name__ == '__main__':
     FILE = Path(__file__).resolve()
     ROOT = FILE.parents[1]
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/zjdet_cat_filter_detect.yaml', help='model.yaml')
+    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/c3_objclassify_s.yaml', help='model.yaml')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--profile', default=True, help='profile model speed')
     parser.add_argument('--test', action='store_true', help='test all yolo*.yaml')
@@ -399,7 +399,7 @@ if __name__ == '__main__':
     device = select_device(opt.device)
     ch_in = 1
     # Create model
-    model = Model(opt.cfg, ch=ch_in, nc=1, imgsz=(224,224)).to(device)
+    model = Model(opt.cfg, ch=ch_in, nc=1, imgsz=(640, 640)).to(device)
     model.train()
 
     # Profile

@@ -26,14 +26,28 @@ def labels_to_image_weights(labels, nc=80, class_weights=np.ones(80)):
     # index = random.choices(range(n), weights=image_weights, k=1)  # weight image sample
     return image_weights
 
-def scale_coords(img1_shape, coords, img0_shape, ratio_pad=None):
+# def scale_coords(img1_shape, coords, img0_shape, ratio_pad=None):
+#     # Rescale coords (xyxy) from img1_shape to img0_shape
+#     if ratio_pad is None:  # calculate from img0_shape
+#         gain = min(img1_shape[0] / img0_shape[0], img1_shape[1] / img0_shape[1])  # gain  = old / new
+#         pad = (img1_shape[1] - img0_shape[1] * gain) / 2, (img1_shape[0] - img0_shape[0] * gain) / 2  # wh padding
+#     else:
+#         gain = ratio_pad[0][0]
+#         pad = ratio_pad[1]
+#
+#     coords[:, [0, 2]] -= pad[0]  # x padding
+#     coords[:, [1, 3]] -= pad[1]  # y padding
+#     coords[:, :4] /= gain
+#     clip_coords(coords, img0_shape)
+#     return coords
+def scale_coords(img1_shape, coords, img0_shape, resize_pad=None):
     # Rescale coords (xyxy) from img1_shape to img0_shape
-    if ratio_pad is None:  # calculate from img0_shape
+    if resize_pad is None:  # calculate from img0_shape
         gain = min(img1_shape[0] / img0_shape[0], img1_shape[1] / img0_shape[1])  # gain  = old / new
         pad = (img1_shape[1] - img0_shape[1] * gain) / 2, (img1_shape[0] - img0_shape[0] * gain) / 2  # wh padding
     else:
-        gain = ratio_pad[0][0]
-        pad = ratio_pad[1]
+        gain = resize_pad[0][0]/img0_shape[0]
+        pad = resize_pad[1]
 
     coords[:, [0, 2]] -= pad[0]  # x padding
     coords[:, [1, 3]] -= pad[1]  # y padding

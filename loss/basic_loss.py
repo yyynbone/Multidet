@@ -163,7 +163,7 @@ def binary_cross_entropy(pred,
     if loss_style == 1:
         loss = 2 * loss / (1 + pos_weight)
     elif loss_style == 2:
-        loss = loss * label.shape[0] / (label.shape[0] + (pos_weight - 1) * label.sum())
+        loss = loss * label.shape[0] / (label.shape[0]  + (pos_weight.item() - 1) * label.sum())
     loss = reduce_loss(loss, reduction)
     return loss
 
@@ -195,6 +195,9 @@ def focal_binary_cross_entropy(pred,
     """
     if pos_weight is  None:
         pos_weight = torch.tensor([1.], device=pred.device)
+    # bs = label.shape[0]
+    # pred = pred.reshape(bs, -1)
+    # label =  label.reshape(bs, -1)
     pred_sigmoid = pred.sigmoid()
     pt = (1 - pred_sigmoid) * label + pred_sigmoid * (1 - label)
     # # bias we focals on positive sample, if alpha=0.1, we focals more on positive, and if alpha=0.5, we focal equally, same as pos_weight
@@ -219,12 +222,22 @@ def focal_binary_cross_entropy(pred,
             pos_weight=pos_weight,
             reduction='none')
     loss = loss * focal_weight
-
     if loss_style == 1:
         loss = 2 * loss / (1 + pos_weight)
     elif loss_style == 2:
-        loss = loss * label.shape[0] / (label.shape[0] + (pos_weight - 1) * label.sum())
+
+        loss = loss * label.shape[0] / (label.shape[0] + (pos_weight.item() - 1) * torch.any(label, axis=1).sum())
+
+        # pos_reduce = label.flatten().shape[0].item() / (label.flatten().shape[0].item() + (pos_weight.item() - 1) * label.sum().item())   #val pos_reduce = 0
+        # print(label.flatten().shape[0], label.sum(), pos_weight, "now pos_reduce is ", pos_reduce)
+        # loss = loss * pos_reduce
+        # print('now we get loss sum of', loss.sum())
+        # if torch.isnan(loss).sum():
+        #     print(pos_reduce, loss.max())
+        #     assert False, 'now we got a nan in focal_loss'
+    # print(loss)
     loss = reduce_loss(loss, reduction)
+
     return loss
 
 class CrossEntropyLoss(nn.Module):

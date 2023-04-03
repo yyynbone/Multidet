@@ -23,7 +23,7 @@ FILE = Path(__file__).resolve()
 from dataloader import IMG_FORMATS, VID_FORMATS, LoadImages, LoadStreams, Clahe
 from utils import (set_logging,print_log, check_file, check_img_size, check_imshow,  colorstr, intersect_dicts,
                    increment_path, non_max_suppression_with_iof, print_args, scale_coords, strip_optimizer,
-                   xyxy2xywh,Annotator, colors, save_one_box, select_device, time_sync)
+                   xyxy2xywh,Annotator, colors, save_one_box, select_device, time_sync, map_visualization)
 
 
 @torch.no_grad()
@@ -153,7 +153,7 @@ def run(weights='checkpoints/zjs_s16.pt',  # model.pt path(s)
                 logger)
             dt[2] += time_sync() - t3
             seen+=1
-
+            map_visualization(da_seg_out[0].sigmoid(), f_path=visualize+'/')
         else:
             # NMS
             # pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)

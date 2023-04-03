@@ -280,3 +280,40 @@ class ClassifyLoss():
         return cls_ls*len(preds), cls_ls.detach()
 
 
+class ObjClassifyLoss():
+    def __init__(self,model, logger=None):
+        use_BCE = model.hyp.get('use_BCE', True)
+        use_focal = model.hyp.get('use_focal', False)
+        class_weight = model.hyp.get('cls_weight', None)
+
+        self.device = next(model.parameters()).device  # get model device
+        self.pos_weight = model.hyp.get('pos_weight', 10)
+        self.pos_gain = model.hyp.get('pos_gain', 1)
+        logger.info(f'ClassifyLoss bg_obj_weight is {self.pos_weight}')
+        self.loss = CrossEntropyLoss(use_sigmoid=use_BCE, use_focal=use_focal, class_weight=class_weight).to(self.device)
+        self.loss_num = 1
+        self.loss_style = model.hyp.get('loss_style', 1)
+        self.label_pos_weight =  10
+
+    def __call__(self, preds, targets):
+        if isinstance(targets, (list, tuple)):
+            class_label, targets, seg_img = targets
+        tobj = self.map(targets, preds)
+        bs = tobj.shape[0]
+        cls_ls = self.loss(preds.reshape(bs, -1), tobj.reshape(bs, -1), pos_weight=self.pos_gain * torch.tensor([self.pos_weight], device=self.device), loss_style=self.loss_style)
+        return cls_ls*len(preds), cls_ls.detach()
+    def map(self, targets, preds):
+        """
+        :param targets: (img_id, cls, x, y ,w, h) / imgsize
+        :param preds: (b, c2, fy, fx)
+        :return:
+        """
+        my, mx = preds.shape[2:4]
+        targets[..., 2:] =  xywh2xyxy(targets[..., 2:]) * torch.tensor([mx, my, mx, my], device=targets.device)# gx1,gy1,gx2,gy2
+        tobj = torch.zeros_like(preds, device=preds.device)  # target obj
+        for img_id, cls, gx1, gy1, gx2, gy2  in targets.long():
+            gx2 = min(max(gx1, gx2)+1, mx)
+            gy2 = min(max(gy1, gy2) + 1, my)
+            tobj[img_id, cls, gy1:gy2, gx1:gx2] = 1.
+        return tobj
+

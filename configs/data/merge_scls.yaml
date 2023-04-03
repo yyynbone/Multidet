@@ -28,4 +28,3 @@ val: images/val  # train images (r elative to 'path') 61 images
 nc: 1  # number of classes
 data_names: ['vehicle', 'bridge', 'ship','airport', 'harbor', 'airplane', 'helipad', 'helicopter']
 names: [ 'airplane']
-

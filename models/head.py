@@ -370,3 +370,28 @@ class YOLOv8Segment(Detect):
         if self.training:
             return x, mc, p
         return (torch.cat([x, mc], 1), p) if self.export else (torch.cat([x[0], mc], 1), (x[1], mc, p))
+
+
+# objectloss
+class ObjClassify(nn.Module):
+    # Classification head, i.e. x(b,c1,20,20) to x(b,c2)
+    def __init__(self, c1, c2, k=1, s=1, p=None, g=1):  # ch_in, ch_out, kernel, stride, padding, groups
+        super().__init__()
+        self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p), groups=g)  # to  (b,c2,fy,fx)
+        if c2==1:
+            self.use_sigmoid = True
+        else:
+            self.use_sigmoid = False
+
+    def forward(self, x):
+        out = self.conv(x)
+        # print(out)
+        if self.training:
+            return out
+        else:
+            z = out.reshape(out.shape[0], out.shape[1], -1)  # bs, nc, map
+            z = z.sigmoid() if self.use_sigmoid else F.softmax(z, dim=2)
+            pred_out = torch.max(z, keepdim=False, dim=-1)[0]
+            # print(pred_out)
+            return (pred_out, out)
+        # return out if self.training else (out.sigmoid(), out)

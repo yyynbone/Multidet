@@ -180,6 +180,27 @@ def feature_visualization(x, module_type, stage, n=32, save_dir=Path('runs/detec
             plt.close()
             np.save(str(f.with_suffix('.npy')), x[0].cpu().numpy())  # npy save
 
+def map_visualization(x, f_path=Path('runs/detect/exp')):
+    """
+    x:              Features to be visualized
+    save_dir:       Directory to save results
+    """
+    import seaborn as sn
+    channels, height, width = x.shape  # channels, height, width
+    if height > 1 and width > 1:
+        blocks = torch.chunk(x.cpu(), channels, dim=0)  # select batch index 0, block by channels
+        plt.figure(figsize=(12, 9), tight_layout=True)
+        for i, block in enumerate(blocks):
+            f = f_path + f'channel{i}_features.png'
+            # plt.imshow(block.squeeze())
+            fig = plt.figure(figsize=(12, 9), tight_layout=True)
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')  # suppress empty matrix RuntimeWarning: All-NaN slice encountered
+                sn.heatmap(block.squeeze(), annot_kws={"size": 8}, cmap='Blues', fmt='.2f', square=True)
+            # print(f'Saving {f}...)')
+            fig.savefig(f, dpi=300, bbox_inches='tight')
+        plt.close()
+
 def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max_size=1920, max_subplots=16):
     # Plot image grid with labels
     if isinstance(targets,tuple):
@@ -387,36 +408,12 @@ def plot_targets_txt():  # from utils.plots import *; plot_targets_txt()
         ax[i].set_title(s[i])
     plt.savefig('targets.jpg', dpi=200)
 
-# def plot_results(file='path/to/results.csv', dir=''):
-#     # Plot training results.csv. Usage: from utils.plots import *; plot_results('path/to/results.csv')
-#     save_dir = Path(file).parent if file else Path(dir)
-#     fig, ax = plt.subplots(2, 5, figsize=(12, 6), tight_layout=True)
-#     ax = ax.ravel()
-#     files = list(save_dir.glob('results*.csv'))
-#     assert len(files), f'No results.csv files found in {save_dir.resolve()}, nothing to plot.'
-#     for fi, f in enumerate(files):
-#         try:
-#             data = pd.read_csv(f)
-#             s = [x.strip() for x in data.columns]
-#             x = data.values[:, 0]
-#             for i, j in enumerate([1, 2, 3, 4, 5, 8, 9, 10, 6, 7]):
-#                 y = data.values[:, j]
-#                 # y[y == 0] = np.nan  # don't show zero values
-#                 ax[i].plot(x, y, marker='.', label=f.stem, linewidth=2, markersize=8)  #f.stem = 'results'
-#                 ax[i].set_title(s[j], fontsize=12)
-#                 # if j in [8, 9, 10]:  # share train and val loss y axes
-#                 #     ax[i].get_shared_y_axes().join(ax[i], ax[i - 5])
-#         except Exception as e:
-#             print(f'Warning: Plotting error for {f}: {e}')
-#     ax[1].legend()
-#     fig.savefig(save_dir / 'results.png', dpi=200)
-#     plt.close()
-
 def make_divide(n, div):
     dived =  n // div
     if n > dived*div:
        dived+=1
     return dived
+
 def plot_results(file='path/to/results.csv', save_name='results.png',dir=''):
     # Plot training results.csv. Usage: from utils.plots import *; plot_results('path/to/results.csv')
     save_dir = Path(file).parent if file else Path(dir)
@@ -550,7 +547,6 @@ def save_one_box(xyxy, im, file='image.jpg', gain=1.02, pad=10, square=False, BG
         cv2.imwrite(str(increment_path(file).with_suffix('.jpg')), crop)
     return crop
 
-
 def output_to_target(output):
     # Convert model output to target format [batch_id, class_id, x, y, w, h, conf]
     targets = []
@@ -559,8 +555,7 @@ def output_to_target(output):
             targets.append([i, cls, *list(*xyxy2xywh(np.array(box)[None])), conf])
     return np.array(targets)
 
-
-def visual_match_pred(match_id, pred, target, img_path, save_dir='.', names=(),conf_ts=0.1):
+def visual_match_pred(im, match_id, pred, target, img_path, save_dir='.', names=(),conf_ts=0.1):
     """
     visualize the pred box and gt box via the rectangle matched
     :param match_id:array (n,2), n is gtbox number, ((gt_id, pred_id),...)
@@ -572,6 +567,10 @@ def visual_match_pred(match_id, pred, target, img_path, save_dir='.', names=(),c
     :param conf_ts: conf thresh
     :return:
     """
+    if isinstance(im, torch.Tensor):
+        im = im.cpu().permute(1, 2, 0).float().numpy()  # bs, _, h, w to bs, h,w, _
+    if np.max(im) <= 1:
+        im *= 255  # de-normalise (optional)
     if not isinstance(conf_ts, (list, tuple)):
         conf_ts = [conf_ts]
     for conf_t in conf_ts:
@@ -608,11 +607,10 @@ def visual_match_pred(match_id, pred, target, img_path, save_dir='.', names=(),c
         mkdir(save_path)
 
         outfile = os.path.join(save_path, img_name)
-        im = cv2.imread(str(img_path))  # BGR
         Thread(target=visual_images, args=(im, gt_result, bbox_result, img_path, outfile, names),
                daemon=True).start()
 
-def save_object(ims, targets, preds_float, paths=None, save_dir='exp', visual_task=0, conf_ts=0.4):
+def save_object(ims, targets, preds_float, paths=None, save_dir='exp', visual_task=0, conf_ts=0.4, f_map=None):
 
     """
     Plot image grid with labels and pred
@@ -634,27 +632,27 @@ def save_object(ims, targets, preds_float, paths=None, save_dir='exp', visual_ta
     if not isinstance(conf_ts, (list, tuple)):
         conf_ts = [conf_ts]
     for conf_t in conf_ts:
-        save_dir  = os.path.join(save_dir,  f'conf{conf_t}', 'filter_false')
-        mkdir(save_dir)
+        save_dir_c  = os.path.join(save_dir,  f'conf{conf_t}', 'filter_false')
+        mkdir(save_dir_c)
         preds = np.where(preds_float > conf_t, 1, 0)
+        # i_l = np.arange(0, len(ims)).reshape(-1, 1).flatten().tolist()
         i_l = np.arange(0, len(ims)).reshape(-1,1)[preds!=targets]
         visual_idx = np.logical_or(preds[i_l]==1, targets[i_l]==1) if visual_task==2 else (preds if visual_task else targets)[i_l]==1
         i_l = i_l.reshape(-1,1)[visual_idx].flatten().tolist()
         pred_flag = [ 'pred_bg' , 'pred_object']
         for i in i_l:
             im = ims[i].astype(np.uint8)
-            target = targets[i]
             pred = preds[i]
             path = paths[i]
             h, w, _ = im.shape  # height, width, channal
             # img = np.full((int(h), int(w), 1), 255, dtype=np.uint8)  # init
             # Annotate
-            fs = int((h + w) * 0.01)  # font size
+            # fs = int((h + w) * 0.01)  # font size
+            fs = 12  # font size
             annotator = Annotator(im.repeat(3, axis=2), line_width=round(fs / 10), font_size=fs, pil=True)
-
-            for i, box_c in enumerate([target, pred]):
-                x, y = i*int(w), 0  # block origin
-                annotator.rectangle([x, y, x + w, y + h], None, (255, 255, 255), width=2)  # borders
-                if path:
-                    annotator.text((x + 5, y - 5 + h), text=Path(path).name[:40].replace(":", "_")+pred_flag[int(pred)], txt_color=(220, 220, 220))  # filenames
-            annotator.im.save(os.path.join(save_dir, Path(path).name))  # save
+            if path:
+                annotator.text(( 5, h - 5), text=Path(path).name[:40].replace(":", "_")+pred_flag[int(pred)], txt_color=(220, 220, 220))  # filenames
+            f_path = os.path.join(save_dir_c, Path(path).name)
+            annotator.im.save(f_path)  # save
+            if f_map is not None:
+                map_visualization(f_map[i].sigmoid(), f_path=f_path)

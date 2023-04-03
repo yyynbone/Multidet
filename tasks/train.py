@@ -467,7 +467,6 @@ def train(hyp, opt, logger, device, Local_rank=-1, Node=-1, World_size=1):
                 with amp.autocast(enabled=cuda):
                     head_out = model(imgs)  # forward
                     det_pred = head_out[de_parallel(model).out_det_from]
-
                     loss, loss_items = compute_loss(det_pred, targets)  # loss scaled by batch_size
                     if Node != -1:
                         loss *= World_size  # gradient averaged between devices in DDP mode
@@ -545,38 +544,37 @@ def train(hyp, opt, logger, device, Local_rank=-1, Node=-1, World_size=1):
                     logger.info(f'now in epoch {epoch}, lr coefficient is:{lr_coeft}')
 
         if Node in [-1,0] and Local_rank in [-1,0]:
+            if opt.val_train:
+                results, _, times = val.run(data_dict,
+                                            batch_size=batch_size,
+                                            imgsz=imgsz,
+                                            model=ema.ema,  # de_parallel(model),
+                                            single_cls=single_cls,
+                                            verbose=True,
+                                            dataloader=train_loader,
+                                            save_dir=save_dir,
+                                            plots=False,
+                                            compute_loss=compute_loss,
+                                            bgr=opt.bgr,
+                                            div_area=opt.div_area,
+                                            last_conf=opt.last_conf,
+                                            loss_num=loss_num,
+                                            logger=logger)
+
+                loss_tuple = results[-1]
+                msg = 'Valuate traindataset before ema update(model update) Epoch: [{0}]    Loss({loss})\n' \
+                      'Detect: P({p:.3f})  R({r:.3f})  mAP@0.5({map50:.3f})  mAP@0.5:0.95({map:.3f})\n' \
+                      'Time: inference({t_inf:.4f}s/frame)  nms({t_nms:.4f}s/frame)'.format(
+                    epoch, loss=loss_tuple,
+                    p=results[0], r=results[1], map50=results[2], map=results[3],
+                    t_inf=times[1], t_nms=times[2])
+                logger.info(msg)
+
             # mAP
             # callbacks.on_train_epoch_end(epoch=epoch)
             ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'names', 'stride', 'class_weights'])
             final_epoch = (epoch + 1 == epochs) or stopper.possible_stop
             if not noval or final_epoch:  # Calculate mAP
-
-                if opt.val_train:
-                    results, _, times = val.run(data_dict,
-                                                   batch_size=batch_size,
-                                                   imgsz=imgsz,
-                                                   model=ema.ema,  # de_parallel(model),
-                                                   single_cls=single_cls,
-                                                   verbose=True,
-                                                   dataloader=train_loader,
-                                                   save_dir=save_dir,
-                                                   plots=False,
-                                                   compute_loss=compute_loss,
-                                                   bgr=opt.bgr,
-                                                   div_area=opt.div_area,
-                                                   last_conf=opt.last_conf,
-                                                   loss_num=loss_num,
-                                                   logger=logger)
-
-                    loss_tuple = results[-1]
-                    msg = 'Valuate traindataset Epoch: [{0}]    Loss({loss})\n' \
-                          'Detect: P({p:.3f})  R({r:.3f})  mAP@0.5({map50:.3f})  mAP@0.5:0.95({map:.3f})\n' \
-                          'Time: inference({t_inf:.4f}s/frame)  nms({t_nms:.4f}s/frame)'.format(
-                        epoch, loss=loss_tuple,
-                        p=results[0], r=results[1], map50=results[2], map=results[3],
-                        t_inf=times[1], t_nms=times[2])
-                    logger.info(msg)
-
                 results, maps,times = val.run(data_dict,
                                               batch_size=batch_size,
                                               imgsz=imgsz,
@@ -630,11 +628,11 @@ def train(hyp, opt, logger, device, Local_rank=-1, Node=-1, World_size=1):
                             torch.save(ckpt, best)
                             logger.info(f'best epoch saved in Epoch {epoch}')
 
-                        if recall_fi > 0.9 and precision_fi > 0.5 :
+                        if recall_fi > 0.9 and precision_fi > 0.58:
                             torch.save(ckpt, w / f'epoch{epoch}.pt')
                             logger.info(f'a better recall epoch saved in Epoch {epoch}')
                         if recall_fi>0.8:
-                            re_fi = precision_fi + (1.5-0.8)/(1-0.8**2)*recall_fi
+                            re_fi = precision_fi + (2-0.8)/(1-0.8**2)*recall_fi
                             if re_fi > best_r :
                                 best_r = re_fi
                                 torch.save(ckpt, best_rt)

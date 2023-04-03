@@ -594,7 +594,7 @@ def classify_match(pred_out, class_label, conf_ts=0.5, logger_func=print):
         all_num = len(class_label)
         accu = match_num /max(all_num, 0.01)
         accus.append(accu)
-        s = ('%20s' + '%11s' * 5) % ('Class', 'Labels', 'R_num', 'P_num', 'P', 'R')
+        s = ('%20s' + '%11s' * 5) % ('Class', 'Labels', 'P_num', 'R_num', 'P', 'R')
         logger_func(s)
         pf = '%20s' + '%11i' * 3 + '%11.3g' * 2  # print format
         logger_func(pf % (f'all in conf {conf_t}', all_num, all_num, match_num, accu, accu))

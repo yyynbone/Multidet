@@ -81,16 +81,10 @@ def run(data,
     iouv = torch.linspace(0.5, 0.95, 10).to(device)  # iou vector for mAP@0.5:0.95
     niou = iouv.numel()
 
-    # Dataloader
-    if weights is not None:
-        # warmup
-        if isinstance(model.device, torch.device) and model.device.type != 'cpu':  # only warmup GPU models
-            im = torch.zeros( (1, ch_in, imgsz[0], imgsz[1]) ).to(model.device).type(torch.half if half else torch.float)  # input image
-            model.forward(im)  # warmup
-
     seen = 0
     confusion_matrix = ConfusionMatrix(nc=nc)
-    names =  {k: v for k, v in enumerate(model.names if hasattr(model, 'names') else model.module.names)}
+
+    names =  {k: v for k, v in enumerate(model.names if hasattr(model, 'names') else [])}
     for ci, cls in enumerate(data.get('names', [])):
         names[ci] = cls
 
@@ -102,10 +96,11 @@ def run(data,
     div_class_num = 1
     if isinstance(div_area, (list, tuple)):
         div_class_num += len(div_area) + 1
-
+    dataloader.dataset.mosaic = False
     pbar = tqdm(dataloader, desc='validate detection', bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}')  # progress bar
 
     for batch_i, (im, targets, paths, shapes) in enumerate(pbar):
+
         # if batch_i >1:
         #     break
         seen += len(im)
@@ -117,10 +112,16 @@ def run(data,
         im = im.half() if half else im.float()  # uint8 to fp16/32
         # print(im.shape)
         im /= 255  # 0 - 255 to 0.0 - 1.0
+
+        # warmup
+        if weights is not None and batch_i==0:
+            if isinstance(model.device, torch.device) and model.device.type != 'cpu':  # only warmup GPU models
+                warm_im = torch.zeros_like(im[:1], device=device)
+                model.forward(warm_im)  # warmup
+
         nb, _, height, width = im.shape  # batch size, channels, height, width
         t2 = time_sync()
         dt[0] += t2 - t1
-
         # Inference
         head_out = model(im, augment=augment)
         # if model.out_det_from:
@@ -133,7 +134,6 @@ def run(data,
         out, train_out =  head_out[model.out_det_from]  # detect out
 
         dt[1] += time_sync() - t2
-
         # Loss
         if compute_loss:
             loss_batch, loss_items= compute_loss(train_out, targets)  # box, obj, cls, seg
@@ -199,20 +199,18 @@ def run(data,
                     save_one_json(predn, jdict, path, class_map)  # append to COCO-JSON dictionary
 
                 if visual_matched:
-                    pred_b_s_l = predn[:, :6].cpu().numpy() # （300，6）
+                    pred_b_s_l = pred[:, :6].cpu().numpy()  # （300，6）
                     box_l = np.zeros((0, 5))
                     match_id = np.zeros((0, 2))
                     if nl:
-                        box_l = torch.cat((tbox, labels[:, 0:1]), 1).cpu().numpy() #(29,5) float
-                        match_id = matches[:, :2].cpu().numpy() # [label, detection], (29,2)
+                        box_l = torch.cat((xywh2xyxy(labels[:, 1:5]), labels[:, 0:1]), 1).cpu().numpy()  # (29,5) float
+                        match_id = matches[:, :2].cpu().numpy()  # [label, detection], (29,2)
                     # match_id is float
                     match_id = match_id.astype(int)
-
-                    # if match_id.shape[0] != box_l.shape[0]:
-                    #     print("gt not matched")
-                    visual_match_pred(match_id, pred_b_s_l, box_l, path, save_dir=save_dir, names=names, conf_ts=last_conf) #correct is shape of [n, div_area=4, iou=10]
-
-
+                    # # if match_id.shape[0] != box_l.shape[0]:
+                    # #     print("gt not matched")
+                    visual_match_pred(im[si], match_id, pred_b_s_l, box_l, path, save_dir=save_dir, names=names,
+                                      conf_ts=last_conf) #correct is shape of [n, div_area=4, iou=10]
             # Plot images
             if plots and batch_i % (1280//batch_size) == 5:
             # if plots and random.randint(1, 100) < 20 if len(pbar)>10 else 100:
@@ -226,7 +224,8 @@ def run(data,
         elif loss_num == 1:
             cls_stats.append((out.cpu(), class_label.cpu()))
             if visual_matched:
-                save_object(im ,class_label.cpu(), out.cpu(), paths, save_dir=save_dir, conf_ts=last_conf)
+                save_object(im ,class_label.cpu(), out.cpu(), paths, save_dir=save_dir, conf_ts=last_conf, f_map=train_out)
+
 
         if model.out_det_from == 1:
             out, _ = head_out[0]  # detect out
@@ -370,7 +369,7 @@ def run(data,
 def parse_opt():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', type=str, default=ROOT / 'data/coco128.yaml', help='dataset.yaml path')
-    parser.add_argument('--weights', type=str, default=ROOT / 'yolov5s.pt', help='model.pt path(s)')
+    parser.add_argument('--weights', type=str,  nargs='+', default=ROOT / 'yolov5s.pt', help='model.pt path(s)')
     parser.add_argument('--cfg', default=None, help='model yaml path(s)')
     parser.add_argument('--batch-size', type=int, default=32, help='batch size')
     parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=640, help='inference size (pixels)')
@@ -413,13 +412,19 @@ def main(opt):
     opt.data = check_dataset(opt.data)  # check
     temp_weights = opt.weights
     weight_list = []
-    if os.path.isdir(temp_weights):
-        for weight in glob(f'{temp_weights}/*.pt'):
-            # if 'zjs_' in weight and 'merge' not in weight:
-            #     weight_list.append(weight)
-            weight_list.append(weight)
-    else:
-        weight_list.append(opt.weights)
+    # for temp_weight in temp_weights:
+    #     if os.path.isdir(temp_weight):
+    #         for weight in glob(f'{temp_weight}/*.pt'):
+    #             # if 'zjs_' in weight and 'merge' not in weight:
+    #             #     weight_list.append(weight)
+    #             weight_list.append(weight)
+    #     else:
+    #         weight_list.append(opt.weights)
+    for temp_weight in temp_weights:
+        if os.path.isdir(temp_weight):
+            weight_list += glob(f'{temp_weight}/**/*.pt', recursive=True)
+        else:
+            weight_list.append(temp_weight)
 
     for opt.weights in weight_list:
         opt.device = select_device(opt.device, batch_size=opt.batch_size)
@@ -460,12 +465,15 @@ def main(opt):
         if opt.val_train and task != 'train':
             tasks = (task, 'train')
         else:
-            tasks = (task)
+            tasks = (task,)
         for opt.task in tasks:
+            opt.model.hyp['val_sample_portion']= 1
             dataset = LoadImagesAndLabels(opt.data[opt.task], opt.imgsz, opt.batch_size, opt.logger,
                                           hyp=opt.model.hyp,  # hyperparameters
                                           stride=int(stride),
-                                          pad=.0,
+                                          augment=True,
+                                          rect=True,
+                                          pad=.5,
                                           prefix=f'{opt.task}: ',
                                           is_bgr=opt.bgr,
                                           filter_str=opt.filter_str,
