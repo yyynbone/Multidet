@@ -21,7 +21,8 @@ import torch.distributed as dist
 
 from loss import *
 from models  import (attempt_load, Model)
-from dataloader import check_anchors, check_train_batch_size, InfiniteDataLoader, LoadImagesAndLabels
+from dataloader.Loaderbk import LoadImagesAndLabels
+from dataloader import check_anchors, check_train_batch_size, InfiniteDataLoader # , LoadImagesAndLabels
 from utils.lr_schedule import *
 from utils import ( check_dataset, check_img_size, check_suffix, colorstr, time_sync, init_seeds, cal_flops, intersect_dicts,
                     labels_to_class_weights, labels_to_image_weights, strip_optimizer,

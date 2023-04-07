@@ -1,4 +1,4 @@
-# Ultralytics YOLO 🚀, GPL-3.0 license
+# # Multitask edit by Zhihua Huang, GPL-3.0 license
 """
 Common modules
 """
