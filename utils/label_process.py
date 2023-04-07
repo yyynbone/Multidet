@@ -7,7 +7,7 @@ def labels_to_class_weights(labels, nc=80, empty_bins=1e16):
         return np.array([])
 
     labels = np.concatenate(labels, 0)  # labels.shape = (866643, 5) for COCO
-    classes = labels[:, 0].astype(np.int)  # labels = [class xywh]
+    classes = labels[:, 0].astype(np.int8)  # labels = [class xywh]
     weights = np.bincount(classes, minlength=nc)  # occurrences per class
 
     # Prepend gridpoint count (for uCE training)
@@ -21,7 +21,7 @@ def labels_to_class_weights(labels, nc=80, empty_bins=1e16):
 
 def labels_to_image_weights(labels, nc=80, class_weights=np.ones(80)):
     # Produces image weights based on class_weights and image contents
-    class_counts = np.array([np.bincount(x[:, 0].astype(np.int), minlength=nc) for x in labels])
+    class_counts = np.array([np.bincount(x[:, 0].astype(np.int8), minlength=nc) for x in labels])
     image_weights = (class_weights.reshape(1, nc) * class_counts).sum(1)
     # index = random.choices(range(n), weights=image_weights, k=1)  # weight image sample
     return image_weights
@@ -81,6 +81,7 @@ def xywh2xyxy(x, w=1, h=1, padw=0, padh=0):
     y[..., 3] = h * (x[..., 1] + x[..., 3] / 2) + padh  # bottom right y
     return y
 
+
 def xyxy2xywh(x, w=1, h=1, clip=False, eps=0.0):
     # Convert nx4 boxes from [x1, y1, x2, y2] to [x, y, w, h] normalized where xy1=top-left, xy2=bottom-right
     if clip:
@@ -92,11 +93,14 @@ def xyxy2xywh(x, w=1, h=1, clip=False, eps=0.0):
     y[:, 3] = (x[:, 3] - x[:, 1]) / h  # height
     return y
 
+
 def xyn2xy(x, w=640, h=640, padw=0, padh=0):
     # Convert normalized segments into pixel segments, shape (n,2)
+    if not len(x):  # x为[]
+        return x
     y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
-    y[:, 0] = w * x[:, 0] + padw  # top left x
-    y[:, 1] = h * x[:, 1] + padh  # top left y
+    y[:, 0::2] = w * x[:, 0::2] + padw  # top left x
+    y[:, 1::2] = h * x[:, 1::2] + padh  # top left y
     return y
 
 def segment2box(segment, width=640, height=640):

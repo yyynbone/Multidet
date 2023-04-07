@@ -9,8 +9,8 @@ from pathlib import Path
 import pkg_resources as pkg
 from utils import ROOT
 from utils.mix_utils import make_divisible
-from utils.logger import set_logging
-LOGGER = set_logging(__name__)
+from utils.logger import print_log
+
 
 def check_python(minimum='3.6.2'):
     # Check current python version vs. required python version
@@ -25,14 +25,14 @@ def check_version(current='0.0.0', minimum='0.0.0', name='version ', pinned=Fals
     else:
         return result
 
-def check_img_size(imgsz, s=32, floor=0, logger=LOGGER):
+def check_img_size(imgsz, s=32, floor=0, logger=None):
     # Verify image size is a multiple of stride s in each dimension
     if isinstance(imgsz, int):  # integer i.e. img_size=640
         new_size = max(make_divisible(imgsz, int(s)), floor)
     else:  # list i.e. img_size=[640, 480]
         new_size = [max(make_divisible(x, int(s)), floor) for x in imgsz]
     if new_size != imgsz:
-        logger.info(f'WARNING: --img-size {imgsz} must be multiple of max stride {s}, updating to {new_size}')
+        print_log(f'WARNING: --img-size {imgsz} must be multiple of max stride {s}, updating to {new_size}', logger)
     return new_size
 
 def check_imshow():

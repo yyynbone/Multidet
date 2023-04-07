@@ -2,7 +2,7 @@ from torch.utils.tensorboard import SummaryWriter
 import warnings
 import torch
 from threading import Thread
-from utils.logger import colorstr
+from utils.logger import colorstr, print_log
 from utils.torch_utils import de_parallel
 from utils.plots import plot_images, plot_results
 
@@ -26,7 +26,7 @@ class Callback():
         s = self.save_dir
         if 'tb' in self.include and not self.opt.evolve:
             prefix = colorstr('TensorBoard: ')
-            self.logger.info(f"{prefix}Start with 'tensorboard --logdir {s.parent}', view at http://localhost:6006/")
+            print_log(f"{prefix}Start with 'tensorboard --logdir {s.parent}', view at http://localhost:6006/", self.logger)
             self.tb = SummaryWriter(str(s))
 
     def on_pretrain_routine_end(self):

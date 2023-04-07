@@ -11,8 +11,7 @@ from copy import deepcopy
 import contextlib
 from contextlib import contextmanager
 from utils.mix_utils import date_modified
-from utils.logger import set_logging
-LOGGER = set_logging(__name__)
+from utils.logger import print_log
 
 def init_seeds(seed=0):
     # Initialize random number generator (RNG) seeds https://pytorch.org/docs/stable/notes/randomness.html
@@ -141,7 +140,7 @@ def infcheck(loss):
         loss = torch.tensor(loss)
     return torch.isinf(loss).sum()
 
-def select_device(device='', batch_size=None, newline=True, logger=LOGGER, rank=-1):
+def select_device(device='', batch_size=None, newline=True, logger=None, rank=-1):
     # device = 'cpu' or '0' or '0,1,2,3'
     s = f'ZJDetection {date_modified()} torch {torch.__version__} '  # string
     device = str(device).strip().lower().replace('cuda:', '')  # to string, 'cuda:0' to '0'
@@ -168,7 +167,7 @@ def select_device(device='', batch_size=None, newline=True, logger=LOGGER, rank=
     if not newline:
         s = s.rstrip()
     if rank in [-1.0]:
-        logger.info(s)
+        print_log(s, logger)
     return torch.device('cuda:0' if cuda else 'cpu')
 
 def cal_flops(model,img_size,verbose=False):
@@ -185,7 +184,7 @@ def cal_flops(model,img_size,verbose=False):
 
 class EarlyStopping:
     # YOLOv5 simple early stopper
-    def __init__(self, patience=30, logger=LOGGER):
+    def __init__(self, patience=30, logger=None):
         self.best_fitness = 0.0  # i.e. mAP
         self.best_epoch = 0
         self.patience = patience or float('inf')  # epochs to wait after fitness stops improving to stop
@@ -200,15 +199,15 @@ class EarlyStopping:
         self.possible_stop = delta >= (self.patience - 1)  # possible stop may occur next epoch
         stop = delta >= self.patience  # stop training if patience exceeded
         if stop:
-            self.logger.info(f'Stopping training early as no improvement observed in last {self.patience} epochs. '
+            print_log(f'Stopping training early as no improvement observed in last {self.patience} epochs. '
                         f'Best results observed at epoch {self.best_epoch}, best model saved as best.pt.\n'
                         f'To update EarlyStopping(patience={self.patience}) pass a new patience value, '
-                        f'i.e. `python train.py --patience 300` or use `--patience 0` to disable EarlyStopping.')
+                        f'i.e. `python train.py --patience 300` or use `--patience 0` to disable EarlyStopping.', self.logger)
         return stop
 
 class LossSaddle:
     # YOLOv5 simple out of saddle point
-    def __init__(self, patience=50, logger=LOGGER):
+    def __init__(self, patience=50, logger=None):
         self.loss = 1e3
         self.best_epoch = 0
         self.patience = patience or float('inf')  # epochs to wait after fitness stops improving to stop
@@ -226,8 +225,8 @@ class LossSaddle:
             change_coeft = (delta >= self.patience) and (
                         epoch - self.coeft_epoch >= 2 * self.patience)  # stop training if patience exceeded
             if change_coeft:
-                self.logger.info(f'Loss isnt going down in last {self.patience} epochs. '
-                            f'Best results observed at epoch {self.best_epoch}, now we rap out the saddle point.\n')
+                print_log(f'Loss isnt going down in last {self.patience} epochs. '
+                            f'Best results observed at epoch {self.best_epoch}, now we rap out the saddle point.\n', self.logger)
                 # #optimizer.paramgroups 只有当前epoch的参数，随着scheduler.step() 更新故不用考虑*0.5以乘回原样。
                 # self.coeft = [0.5, .5, 1., 1., 1., 2., 2.]
                 # self.coeft = [1., 10., 5., 2.]

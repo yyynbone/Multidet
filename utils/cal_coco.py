@@ -417,7 +417,7 @@ def visual_return(cocoeval, anno, save_dir, img_prefix, class_area=None, iou_id=
         im = cv2.imread(img_path)  # BGR
         gt_result[:, -2] -= 1 # category from 1, so substract 1
         bbox_result[:, -2] -= 1 # category from 1
-        Thread(target=visual_images, args=(im, gt_result, bbox_result, img_path, outfile, classnames),
+        Thread(target=visual_images, args=(im, bbox_result, gt_result, img_path, outfile, classnames),
                daemon=True).start()
         # visual_images(im, gt_result, bbox_result, img_path, outfile, classnames)
 

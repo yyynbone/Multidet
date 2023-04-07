@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from utils import bbox_iou,  is_parallel, nancheck, infcheck, smooth_BCE, build_targets, TaskAlignedAssigner, dist2bbox, make_anchors, bbox2dist, xywh2xyxy
+from utils import bbox_iou,  is_parallel, nancheck, infcheck, smooth_BCE, build_targets, TaskAlignedAssigner, dist2bbox, make_anchors, bbox2dist, xywh2xyxy, print_log
 from loss.basic_loss import FocalLoss, CrossEntropyLoss
 
 class LossV5:
@@ -101,9 +101,9 @@ class LossV5:
 
                 obj_ls= self.BCEobj(pi[..., 4], tobj)
                 if obj_ls > 2:
-                    self.logger.info(f"now in level {i} object loss bigger, which may cause erupt")
+                    print_log(f"now in level {i} object loss bigger, which may cause erupt", self.logger)
                 if nancheck([cls_ls, iou_ls, obj_ls]) or infcheck([cls_ls, iou_ls, obj_ls]):
-                    self.logger(f"warning now in level {i},  we found a nan or inf in loss {[cls_ls, iou_ls, obj_ls]}")
+                    print_log(f"warning now in level {i},  we found a nan or inf in loss {[cls_ls, iou_ls, obj_ls]}", self.logger)
 
                 lobj += obj_ls * self.balance[i]  # obj loss
                 if self.autobalance:
@@ -258,7 +258,7 @@ class ClassifyLoss():
         self.device = next(model.parameters()).device  # get model device
         self.pos_weight = model.hyp.get('pos_weight', None)
         self.pos_gain = model.hyp.get('pos_gain', 1)
-        logger.info(f'ClassifyLoss bg_obj_weight is {self.pos_weight}')
+        print_log(f'ClassifyLoss bg_obj_weight is {self.pos_weight}', logger)
         self.loss = CrossEntropyLoss(use_sigmoid=use_BCE, use_focal=use_focal, class_weight=class_weight).to(self.device)
         self.loss_num = 1
         self.label_pos_weight = model.hyp.get('max_pos_weight', 10)
@@ -289,7 +289,7 @@ class ObjClassifyLoss():
         self.device = next(model.parameters()).device  # get model device
         self.pos_weight = model.hyp.get('pos_weight', 10)
         self.pos_gain = model.hyp.get('pos_gain', 1)
-        logger.info(f'ClassifyLoss bg_obj_weight is {self.pos_weight}')
+        print_log(f'ClassifyLoss bg_obj_weight is {self.pos_weight}', logger)
         self.loss = CrossEntropyLoss(use_sigmoid=use_BCE, use_focal=use_focal, class_weight=class_weight).to(self.device)
         self.loss_num = 1
         self.loss_style = model.hyp.get('loss_style', 1)

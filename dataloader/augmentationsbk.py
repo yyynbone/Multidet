@@ -1,3 +1,4 @@
+# YOLOv5 🚀 by Ultralytics, GPL-3.0 license
 """
 Image augmentation functions
 """
@@ -8,23 +9,52 @@ import random
 import cv2
 import numpy as np
 
-from utils import   bbox_ioa, resample_segments, segment2box,xyxy2xywh, xywh2xyxy
+from utils import  check_version, colorstr, bbox_ioa, resample_segments, segment2box
+
+class Albumentations:
+    # YOLOv5 Albumentations class (optional, only used if package is installed)
+    def __init__(self, logger):
+        self.transform = None
+        try:
+            import albumentations as A
+            check_version(A.__version__, '1.0.3', hard=True)  # version requirement
+
+            self.transform = A.Compose([
+                A.Blur(p=0.01),
+                A.MedianBlur(p=0.01),
+                A.ToGray(p=0.01),
+                A.CLAHE(p=0.01),
+                A.RandomBrightnessContrast(p=0.0),
+                A.RandomGamma(p=0.0),
+                A.ImageCompression(quality_lower=75, p=0.0)],
+                bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels']))
+
+            logger.info(colorstr('albumentations: ') + ', '.join(f'{x}' for x in self.transform.transforms if x.p))
+        except ImportError:  # package not installed, skip
+            pass
+        except Exception as e:
+            logger.info(colorstr('albumentations: ') + f'{e}')
+
+    def __call__(self, im, labels, p=1.0):
+        if self.transform and random.random() < p:
+            new = self.transform(image=im, bboxes=labels[:, 1:], class_labels=labels[:, 0])  # transformed
+            im, labels = new['image'], np.array([[c, *b] for c, b in zip(new['class_labels'], new['bboxes'])])
+        return im, labels
 
 def augment_hsv(im, hgain=0.5, sgain=0.5, vgain=0.5):
-    if im.ndim==3:  # numpy array ndim, torch.dim()
-        # HSV color-space augmentation
-        if hgain or sgain or vgain:
-            r = np.random.uniform(-1, 1, 3) * [hgain, sgain, vgain] + 1  # random gains
-            hue, sat, val = cv2.split(cv2.cvtColor(im, cv2.COLOR_BGR2HSV))
-            dtype = im.dtype  # uint8
+    # HSV color-space augmentation
+    if hgain or sgain or vgain:
+        r = np.random.uniform(-1, 1, 3) * [hgain, sgain, vgain] + 1  # random gains
+        hue, sat, val = cv2.split(cv2.cvtColor(im, cv2.COLOR_BGR2HSV))
+        dtype = im.dtype  # uint8
 
-            x = np.arange(0, 256, dtype=r.dtype)
-            lut_hue = ((x * r[0]) % 180).astype(dtype)
-            lut_sat = np.clip(x * r[1], 0, 255).astype(dtype)
-            lut_val = np.clip(x * r[2], 0, 255).astype(dtype)
+        x = np.arange(0, 256, dtype=r.dtype)
+        lut_hue = ((x * r[0]) % 180).astype(dtype)
+        lut_sat = np.clip(x * r[1], 0, 255).astype(dtype)
+        lut_val = np.clip(x * r[2], 0, 255).astype(dtype)
 
-            im_hsv = cv2.merge((cv2.LUT(hue, lut_hue), cv2.LUT(sat, lut_sat), cv2.LUT(val, lut_val)))
-            cv2.cvtColor(im_hsv, cv2.COLOR_HSV2BGR, dst=im)  # no return needed
+        im_hsv = cv2.merge((cv2.LUT(hue, lut_hue), cv2.LUT(sat, lut_sat), cv2.LUT(val, lut_val)))
+        cv2.cvtColor(im_hsv, cv2.COLOR_HSV2BGR, dst=im)  # no return needed
 
 def hist_equalize(im, clahe=True, bgr=False):
     # Equalize histogram on BGR image 'im' with im.shape(n,m,3) and range 0-255
@@ -36,10 +66,8 @@ def hist_equalize(im, clahe=True, bgr=False):
         yuv[:, :, 0] = cv2.equalizeHist(yuv[:, :, 0])  # equalize Y channel histogram
     return cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR if bgr else cv2.COLOR_YUV2RGB)  # convert YUV image to RGB
 
-def replicate(result):
-    im = result['img']
-    labels = result['labels']
-    # Replicate labels and copy box to another place of the image
+def replicate(im, labels):
+    # Replicate labels
     h, w = im.shape[:2]
     boxes = labels[:, 1:].astype(int)
     x1, y1, x2, y2 = boxes.T
@@ -51,21 +79,55 @@ def replicate(result):
         x1a, y1a, x2a, y2a = [xc, yc, xc + bw, yc + bh]
         im[y1a:y2a, x1a:x2a] = im[y1b:y2b, x1b:x2b]  # im4[ymin:ymax, xmin:xmax]
         labels = np.append(labels, [[labels[i, 0], x1a, y1a, x2a, y2a]], axis=0)
-    result['img'] = im
-    result['labels'] = labels
 
-def random_perspective(result, degrees=10, translate=.1, scale=.1, shear=10, perspective=0.0):
+    return im, labels
+
+def letterbox(combination, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleFill=False, scaleup=True, stride=32):
+    # Resize and pad image while meeting stride-multiple constraints
+    # the input of new_shape is (h,w)
+    im, gray = combination
+    shape = im.shape[:2]  # current shape [height, width]
+    if isinstance(new_shape, int):
+        new_shape = (new_shape, new_shape)  # h,w
+
+
+    # Scale ratio (new / old)
+    r = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
+    if not scaleup:  # only scale down, do not scale up (for better val mAP)
+        r = min(r, 1.0)
+
+    # Compute padding
+    ratio = r, r  # width, height ratios
+    new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
+    dw, dh = new_shape[1] - new_unpad[0], new_shape[0] - new_unpad[1]  # wh padding
+    if auto:  # minimum rectangle
+        dw, dh = np.mod(dw, stride), np.mod(dh, stride)  # wh padding
+    elif scaleFill:  # stretch
+        dw, dh = 0.0, 0.0
+        new_unpad = (new_shape[1], new_shape[0])
+        ratio = new_shape[1] / shape[1], new_shape[0] / shape[0]  # width, height ratios
+
+    dw /= 2  # divide padding into 2 sides
+    dh /= 2
+
+    if shape[::-1] != new_unpad:  # resize
+        im = cv2.resize(im, new_unpad, interpolation=cv2.INTER_LINEAR)
+        if gray is not None:
+            gray = cv2.resize(gray, new_unpad, interpolation=cv2.INTER_LINEAR)
+    top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
+    left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
+    im = cv2.copyMakeBorder(im, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)  # add border
+    # gray = cv2.copyMakeBorder(gray, top, bottom, left, right, cv2.BORDER_CONSTANT, value=0)
+    if gray is not None:
+        gray = cv2.copyMakeBorder(gray, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(2,2,2))
+    combination = (im, gray)
+    return combination, ratio, (dw, dh)
+
+def random_perspective(combination, targets=(), segments=(), degrees=10, translate=.1, scale=.1, shear=10, perspective=0.0,
+                       border=(0, 0)):
     # torchvision.transforms.RandomAffine(degrees=(-10, 10), translate=(0.1, 0.1), scale=(0.9, 1.1), shear=(-10, 10))
     # targets = [cls, xyxy]
-    im = result['img']
-    labels = result['labels']
-    # # xywh to xyxy
-    # if len(labels):
-    #     labels[:, 1:5] = xywh2xyxy(labels[:, 1:5], w=result['img'].shape[1], h=result['img'].shape[0])
-
-    seg = result['segment']
-    segments = result['instance_segments']
-    border = result.get('border', (0,0))
+    im, gray = combination
 
     height = im.shape[0] + border[0] * 2  # shape(h,w,c)
     width = im.shape[1] + border[1] * 2
@@ -103,14 +165,14 @@ def random_perspective(result, degrees=10, translate=.1, scale=.1, shear=10, per
     if (border[0] != 0) or (border[1] != 0) or (M != np.eye(3)).any():  # image changed
         if perspective:
             im = cv2.warpPerspective(im, M, dsize=(width, height), borderValue=(114, 114, 114))
-            if seg is not None:
-                # seg = cv2.warpPerspective(seg, M, dsize=(width, height), borderValue=0)
-                seg = cv2.warpPerspective(seg, M, dsize=(width, height), borderValue=(2,2,2))
+            if gray is not None:
+                # gray = cv2.warpPerspective(gray, M, dsize=(width, height), borderValue=0)
+                gray = cv2.warpPerspective(gray, M, dsize=(width, height), borderValue=(2,2,2))
         else:  # affine
             im = cv2.warpAffine(im, M[:2], dsize=(width, height), borderValue=(114, 114, 114))
-            if seg is not None:
-                # seg = cv2.warpAffine(seg, M[:2], dsize=(width, height), borderValue=0)
-                seg = cv2.warpAffine(seg, M[:2], dsize=(width, height), borderValue=(2,2,2))
+            if gray is not None:
+                # gray = cv2.warpAffine(gray, M[:2], dsize=(width, height), borderValue=0)
+                gray = cv2.warpAffine(gray, M[:2], dsize=(width, height), borderValue=(2,2,2))
 
     # Visualize
     # import matplotlib.pyplot as plt
@@ -119,10 +181,11 @@ def random_perspective(result, degrees=10, translate=.1, scale=.1, shear=10, per
     # ax[1].imshow(im2[:, :, ::-1])  # warped
 
     # Transform label coordinates
-    n = len(labels) if labels is not None else 0
+    n = len(targets)
     if n:
+        use_segments = any(x.any() for x in segments)
         new = np.zeros((n, 4))
-        if segments is not None:  # warp segments
+        if use_segments:  # warp segments
             segments = resample_segments(segments)  # upsample
             for i, segment in enumerate(segments):
                 xy = np.ones((len(segment), 3))
@@ -135,7 +198,7 @@ def random_perspective(result, degrees=10, translate=.1, scale=.1, shear=10, per
 
         else:  # warp boxes
             xy = np.ones((n * 4, 3))
-            xy[:, :2] = labels[:, [1, 2, 3, 4, 1, 4, 3, 2]].reshape(n * 4, 2)  # x1y1, x2y2, x1y2, x2y1
+            xy[:, :2] = targets[:, [1, 2, 3, 4, 1, 4, 3, 2]].reshape(n * 4, 2)  # x1y1, x2y2, x1y2, x2y1
             xy = xy @ M.T  # transform
             xy = (xy[:, :2] / xy[:, 2:3] if perspective else xy[:, :2]).reshape(n, 8)  # perspective rescale or affine
 
@@ -149,30 +212,22 @@ def random_perspective(result, degrees=10, translate=.1, scale=.1, shear=10, per
             new[:, [1, 3]] = new[:, [1, 3]].clip(0, height)
 
         # filter candidates
-        i = box_candidates(box1=labels[:, 1:5].T * s, box2=new.T, area_thr=0.01 if segments is not None else 0.10)
-        labels = labels[i]
-        labels[:, 1:5] = new[i]
-        if segments is not None:
-            segments =  segments[i]
-    # if len(labels):
-    #     labels[:, 1:5] = xyxy2xywh(labels[:, 1:5], w=result['img'].shape[1], h=result['img'].shape[0], clip=True, eps=1E-3)
-    result['labels'] = labels
-    result['img'] = im
-    result['segment'] = seg
-    result['instance_segments'] = segments
+        i = box_candidates(box1=targets[:, 1:5].T * s, box2=new.T, area_thr=0.01 if use_segments else 0.10)
+        targets = targets[i]
+        targets[:, 1:5] = new[i]
+    combination = (im, gray)
+    return combination, targets
 
-def copy_paste(result, p=0.5):
+def copy_paste(combination, labels, segments, p=0.5):
+    # mirror selected instance_labels
     # Implement Copy-Paste augmentation https://arxiv.org/abs/2012.07177, labels as nx5 np.array(cls, xyxy)
-    im = result['img']
-    seg = result['segment']
-    segments = result['instance_segments']
-    labels = result['labels']
-    n = len(segments) if segments is not None else 0
+    im, gray = combination
+    n = len(segments)
     if p and n:
         h, w, c = im.shape  # height, width, channels
         im_new = np.zeros(im.shape, np.uint8)
-        if seg is not None:
-            seg_new = np.zeros(seg.shape, np.uint8)
+        if gray is not None:
+            gray_new = np.zeros(gray.shape, np.uint8)
         for j in random.sample(range(n), k=round(p * n)):
             l, s = labels[j], segments[j]
             box = w - l[3], l[2], w - l[1], l[4]
@@ -181,28 +236,24 @@ def copy_paste(result, p=0.5):
                 labels = np.concatenate((labels, [[l[0], *box]]), 0)
                 segments.append(np.concatenate((w - s[:, 0:1], s[:, 1:2]), 1))
                 cv2.drawContours(im_new, [segments[j].astype(np.int32)], -1, (255, 255, 255), cv2.FILLED)
-                if seg is not None:
-                    cv2.drawContours(seg_new, [segments[j].astype(np.int32)], -1, (255, 255, 255), cv2.FILLED)
+                if gray is not None:
+                    cv2.drawContours(gray_new, [segments[j].astype(np.int32)], -1, (255, 255, 255), cv2.FILLED)
 
         im_result = cv2.bitwise_and(src1=im, src2=im_new)
         im_result = cv2.flip(im_result, 1)  # augment segments (flip left-right)
         i = im_result > 0  # pixels to replace
         # i[:, :] = result.max(2).reshape(h, w, 1)  # act over ch
         im[i] = im_result[i]  # cv2.imwrite('debug.jpg', im)  # debug
-        if seg is not None:
-            seg_result = cv2.bitwise_and(src1=seg, src2=seg_new)
+        if gray is not None:
+            seg_result = cv2.bitwise_and(src1=gray, src2=gray_new)
             seg_result = cv2.flip(seg_result, 1)
             i = seg_result > 0
-            seg[i] = seg_result[i]
-    result['img'] = im
-    result['segment'] = seg
-    result['instance_segments'] = segments
-    result['labels'] = labels
+            gray[i] = seg_result[i]
 
-def cutout(result, p=0.5):
+    return (im, gray), labels, segments
+
+def cutout(im, labels, p=0.5):
     # Applies image cutout augmentation https://arxiv.org/abs/1708.04552
-    im = result['img']
-    labels = result['labels']
     if random.random() < p:
         h, w = im.shape[:2]
         scales = [0.5] * 1 + [0.25] * 2 + [0.125] * 4 + [0.0625] * 8 + [0.03125] * 16  # image size fraction
@@ -224,23 +275,19 @@ def cutout(result, p=0.5):
                 box = np.array([xmin, ymin, xmax, ymax], dtype=np.float32)
                 ioa = bbox_ioa(box, labels[:, 1:5])  # intersection over area
                 labels = labels[ioa < 0.60]  # remove >60% obscured labels
-    result['img'] = im
-    result['labels'] = labels
+    return labels
 
-def mixup(result1, result2):
+def mixup(combination, labels, combination2, labels2):
     # Applies MixUp augmentation https://arxiv.org/pdf/1710.09412.pdf
-    im1, labels1, seg1 = result1['img'], result1['labels'], result1['segment']
-    im2, labels2, seg2 = result2['img'], result2['labels'], result2['segment']
+    im, gray = combination
+    im2, gray2 = combination2
     r = np.random.beta(32.0, 32.0)  # mixup ratio, alpha=beta=32.0
-    im = (im1 * r + im2 * (1 - r)).astype(np.uint8)
-    if seg1 is not None:
-        seg = (seg1 * r + seg2 * (1 - r)).astype(np.uint8)
-    labels = np.concatenate((labels1, labels2), 0)
-    result = {}
-    result['img'] = im
-    result['labels'] = labels
-    result['mixup'] = [result1, result2]
-    return result
+    im = (im * r + im2 * (1 - r)).astype(np.uint8)
+    if gray is not None:
+        gray = (gray * r + gray2 * (1 - r)).astype(np.uint8)
+    labels = np.concatenate((labels, labels2), 0)
+    combination = (im, gray)
+    return combination, labels
 
 def box_candidates(box1, box2, wh_thr=2, ar_thr=20, area_thr=0.1, eps=1e-16):  # box1(4,n), box2(4,n)
     # Compute candidate boxes: box1 before augment, box2 after augment, wh_thr (pixels), aspect_ratio_thr, area_ratio
@@ -249,5 +296,24 @@ def box_candidates(box1, box2, wh_thr=2, ar_thr=20, area_thr=0.1, eps=1e-16):  #
     ar = np.maximum(w2 / (h2 + eps), h2 / (w2 + eps))  # aspect ratio
     return (w2 > wh_thr) & (h2 > wh_thr) & (w2 * h2 / (w1 * h1 + eps) > area_thr) & (ar < ar_thr)  # candidates
 
+def Clahe(img, clipLimit=2.0, tileGridSize=(8, 8)):
+    if len(img.shape)!=2:
+        print('CLAHE must be gray image, so we transfor it to gray')
+            #transpose to c, h, w
+        transpose_flag = False
+        if img.shape[0]>3:
+            img = img.transpose(1,2,0)
+            transpose_flag = True
+        img_channel = img.shape[0]
+        if img_channel==3:
+            img = img[:1, ...]*0.299  + img[1:2, ...]*0.587 + img[2:, ...]*0.114  # 22bridge 2airport
+        img4 = cv2.createCLAHE(clipLimit=clipLimit, tileGridSize=tileGridSize)
+        img = img4.apply(img[0])
+        img = img[None].repeat(img_channel,axis=0)
+        if transpose_flag:
+            img = img.transpose(2, 0, 1)
+    else:
+        img4 = cv2.createCLAHE(clipLimit=clipLimit, tileGridSize=tileGridSize)
+        img = img4.apply(img)
 
-
+    return img

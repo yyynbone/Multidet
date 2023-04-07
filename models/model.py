@@ -9,7 +9,7 @@ from models.layers import *
 
 from dataloader.autoanchor import check_anchor_order
 from utils import (feature_visualization, fuse_conv_and_bn, initialize_weights, intersect_dicts,
-                   cal_flops, scale_img, select_device, time_sync, iter_extend_axis)
+                   cal_flops, scale_img, select_device, time_sync, iter_extend_axis, print_log)
 
 LOGGER = set_logging(__name__)
 
@@ -21,7 +21,7 @@ except ImportError:
 det_head = (Detect, YOLOv8Detect, IDetect)
 cls_head = (Classify, YOLOv8Classify, SqueezenetClassify, ObjClassify)
 def parse_model(d, ch_in, logger=LOGGER):  # model_dict, input_channels(3)
-    logger.info(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}")
+    print_log(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}", logger)
     anchors, nc, gd, gw = d.get('anchors', []), d['nc'], d['depth_multiple'], d['width_multiple']
     backbone, head = d['backbone'], d['head']
     neck = d.get('neck', [])
@@ -73,7 +73,7 @@ def parse_model(d, ch_in, logger=LOGGER):  # model_dict, input_channels(3)
         t = str(m)[8:-2].replace('__main__.', '')  # module type
         np = sum(x.numel() for x in m_.parameters())  # number params
         m_.i, m_.f, m_.type, m_.np = i, f, t, np  # attach index, 'from' index, type, number params
-        logger.info(f'{i:>3}{str(f):>18}{np:10.0f}  {t:<40}{str(args):<30}')  # print
+        print_log(f'{i:>3}{str(f):>18}{np:10.0f}  {t:<40}{str(args):<30}', logger)  # print
         # if isinstance(f, str):
         #     print(f)
         #     print(f=='input')
@@ -121,7 +121,7 @@ def attempt_load(weights, map_location=None, cfg=None, inplace=True, fuse=True, 
     if len(model) == 1:
         return model[-1]  # return model
     else:
-        logger.info(f'Ensemble created with {weights}\n')
+        print_log(f'Ensemble created with {weights}\n', logger)
         for k in ['names']:
             setattr(model, k, getattr(model[-1], k))
         model.stride = model[torch.argmax(torch.tensor([m.stride.max() for m in model])).int()].stride  # max stride
@@ -145,7 +145,7 @@ class Model(nn.Module):
         ch = self.yaml['ch_input'] = self.yaml.get('ch_input', ch)  # input channels
         self.nc = self.yaml['nc'] = nc # self.yaml.get('nc', nc)
         if anchors:
-            self.logger.info(f'Overriding model.yaml anchors with anchors={anchors}')
+            print_log(f'Overriding model.yaml anchors with anchors={anchors}', self.logger)
             self.yaml['anchors'] = round(anchors)  # override yaml value
         self.model, self.save, (self.neck_from, self.head_from) = parse_model(deepcopy(self.yaml), ch, logger=logger)  # model, savelist
         # self.names = [str(i) for i in range(self.yaml['nc'])]  # default names
@@ -244,8 +244,8 @@ class Model(nn.Module):
                 try:
                     x = m(x)# run
                 except:
-                    self.logger.info(i, m)
-                    self.logger.info([j.shape for j in (x if isinstance(x, list) else [x])])
+                    print_log(i, m, self.logger)
+                    print_log([j.shape for j in (x if isinstance(x, list) else [x])], self.logger)
             # if i==0:
             #     from utils import show_model_param
             #     show_model_param(m, path='./exp')
@@ -264,7 +264,7 @@ class Model(nn.Module):
                             out_bool = out_int.flatten().bool()
                             x = x[out_bool] # RuntimeError: NYI: Named tensors are not supported with the tracer
                             # if not len(x):
-                            #     self.logger.info('return in classify, all background')
+                            #     print_log('return in classify, all background', self.logger)
                             #     cls_pred = [x for _ in range(self.nl)]
                             #     det_out = x.view(x.shape[0], 0, )# modify det out, it should be .view(bs, -1, self.no)
                             #     return (cls_out if m.training else (out_int, cls_out[1]),
@@ -326,17 +326,17 @@ class Model(nn.Module):
         thops.append(o)
         params.append(m.np)
         if m == self.model[0]:
-            self.logger.info(f"{'time (ms)':>10s} {'GFLOPs':>10s} {'params':>10s}  {'module':>40s}   {'input_size':>30s}")
-        self.logger.info(f'{dt[-1]:10.2f} {o:10.4f} {m.np:10.0f}  {m.type:40s}  {[j.shape for j in x] if isinstance(x, list) else x.shape}')
+            print_log(f"{'time (ms)':>10s} {'GFLOPs':>10s} {'params':>10s}  {'module':>40s}   {'input_size':>30s}", self.logger)
+        print_log(f'{dt[-1]:10.2f} {o:10.4f} {m.np:10.0f}  {m.type:40s}  {[j.shape for j in x] if isinstance(x, list) else x.shape}', self.logger)
         if c or isinstance(m, cls_head):
-            self.logger.info(f"{sum(dt):10.2f} {sum(thops):>10.4f} {sum(params):>10.0f}  Total ")
+            print_log(f"{sum(dt):10.2f} {sum(thops):>10.4f} {sum(params):>10.0f}  Total ", self.logger)
 
     def _print_biases(self):
         m = self.model[self.det_head_idx]  # Detect() module
         for mi in m.m:  # from
             b = mi.bias.detach().view(m.na, -1).T  # conv.bias(255) to (3,85)
-            self.logger.info(
-                ('%6g Conv2d.bias:' + '%10.3g' * 6) % (mi.weight.shape[1], *b[:5].mean(1).tolist(), b[5:].mean()))
+            print_log(
+                ('%6g Conv2d.bias:' + '%10.3g' * 6) % (mi.weight.shape[1], *b[:5].mean(1).tolist(), b[5:].mean()), self.logger)
 
     # def _print_weights(self):
     #     for m in self.model.modules():
@@ -344,7 +344,7 @@ class Model(nn.Module):
     #             LOGGER.info('%10.3g' % (m.w.detach().sigmoid() * 2))  # shortcut weights
 
     def fuse(self):  # fuse model Conv2d() + BatchNorm2d() layers
-        self.logger.info('Fusing layers... ')
+        print_log('Fusing layers... ', self.logger)
         for m in self.model.modules():
             if isinstance(m, (Conv, DWConv)) and hasattr(m, 'bn'):
                 m.conv = fuse_conv_and_bn(m.conv, m.bn)  # update conv
@@ -357,18 +357,18 @@ class Model(nn.Module):
         n_p = sum(x.numel() for x in self.parameters())  # number parameters
         n_g = sum(x.numel() for x in self.parameters() if x.requires_grad)  # number gradients
         if verbose:
-            self.logger.info(
-                f"{'layer':>5} {'name':>40} {'gradient':>9} {'parameters':>12} {'shape':>20} {'mu':>10} {'sigma':>10}")
+            print_log(
+                f"{'layer':>5} {'name':>40} {'gradient':>9} {'parameters':>12} {'shape':>20} {'mu':>10} {'sigma':>10}", self.logger)
             for i, (name, p) in enumerate(self.model.named_parameters()):
                 name = name.replace('module_list.', '')
-                self.logger.info('%5g %40s %9s %12g %20s %10.3g %10.3g' %
-                      (i, name, p.requires_grad, p.numel(), list(p.shape), p.mean(), p.std()))
+                print_log('%5g %40s %9s %12g %20s %10.3g %10.3g' %
+                      (i, name, p.requires_grad, p.numel(), list(p.shape), p.mean(), p.std()), self.logger)
         self.need_stride = True
         flops = cal_flops(self, img_size, verbose=verbose)
         self.need_stride = False
         layer_num = len(list(self.modules()))
-        self.logger.info(f"Model Summary: {layer_num}layers, {n_p} parameters, {n_g} gradients,image size is {img_size}, "
-                         f"{flops:.1f} GFLOPs in {next(self.parameters()).device}")
+        print_log(f"Model Summary: {layer_num}layers, {n_p} parameters, {n_g} gradients,image size is {img_size}, "
+                         f"{flops:.1f} GFLOPs in {next(self.parameters()).device}", self.logger)
 
 
     def _apply(self, fn):

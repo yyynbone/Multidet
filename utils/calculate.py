@@ -5,7 +5,7 @@ from pathlib import Path
 from utils.label_process import xyxy2xywh, xywh2xyxy
 import time
 import torchvision
-from utils.plots import plot_pr_curve, plot_confusionmatrics
+from utils.plots import plot_pr_curve, plot_confusionmatrics, print_log
 
 def bbox_iou(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False, eps=1e-7):
     # Returns the IoU of box1 to box2. box1 is 4, box2 is nx4
@@ -51,7 +51,7 @@ def bbox_iou(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False, eps=
     else:
         return iou  # IoU
 
-def box_iou(box1, box2):
+def box_iou(box1, box2, eps=1E-7):
     # https://github.com/pytorch/vision/blob/master/torchvision/ops/boxes.py
     """
     Return intersection-over-union (Jaccard index) of boxes.
@@ -73,7 +73,7 @@ def box_iou(box1, box2):
 
     # inter(N,M) = (rb(N,M,2) - lt(N,M,2)).clamp(0).prod(2)
     inter = (torch.min(box1[:, None, 2:], box2[:, 2:]) - torch.max(box1[:, None, :2], box2[:, :2])).clamp(0).prod(2)
-    return inter / (area1[:, None] + area2 - inter)  # iou = inter / (area1 + area2 - inter)
+    return inter / (area1[:, None] + area2 - inter+eps)  # iou = inter / (area1 + area2 - inter)
 
 def bbox_ioa(box1, box2, eps=1E-7):
     """ Returns the intersection over box2 area given box1, box2. Boxes are x1y1x2y2
@@ -261,6 +261,8 @@ def process_batch(detections, labels, iouv, div_area=None):
 
         matches = torch.Tensor(matches).to(iouv.device)
         correct[matches[:, 1].long(), 0] = (matches[:, 2:3] >= iouv)
+    if matches.shape[0]!=labels.shape[0]:
+        print('loss matched')
     if isinstance(div_area, (list, tuple)):
         tbox = xyxy2xywh(labels[:, 1:])
         area = (tbox[:, 2] * tbox[:, 3]).cpu()
@@ -270,7 +272,7 @@ def process_batch(detections, labels, iouv, div_area=None):
             area_ids = torch.arange(len(area_id_bool))[area_id_bool]
             #np and tensor broadcast is not the same
             area_bool = np.logical_or.reduce(matches[:, :1].cpu()==area_ids, axis=1)  # should be (match_num, 1)
-            area_bool = area_bool[...,None].to(iouv.device).repeat(1, 10)
+            area_bool = area_bool[...,None].to(iouv.device).repeat(1, iouv.shape[0])
             # correct[matches[:, 1].long(),area_id_idx+1] = torch.logical_and(correct[matches[:, 1].long(),area_id_idx+1], area_bool )
             correct[matches[:, 1].long(), area_id_idx] = area_bool.bool()
         # because we calculate the number, first we should match the gt,  then wo assigned the pred which is not matched.
@@ -583,7 +585,7 @@ def non_max_suppression_with_iof(prediction, conf_thres=0.25, iou_thres=0.45, cl
 
     return nms_iof(prediction) if iof_nms else prediction
 
-def classify_match(pred_out, class_label, conf_ts=0.5, logger_func=print):
+def classify_match(pred_out, class_label, conf_ts=0.5, logger=None):
     if not isinstance(conf_ts, (list, tuple)):
         conf_ts = [conf_ts]
     ps, rs, accus = [], [], []
@@ -595,9 +597,9 @@ def classify_match(pred_out, class_label, conf_ts=0.5, logger_func=print):
         accu = match_num /max(all_num, 0.01)
         accus.append(accu)
         s = ('%20s' + '%11s' * 5) % ('Class', 'Labels', 'P_num', 'R_num', 'P', 'R')
-        logger_func(s)
+        print_log(s, logger)
         pf = '%20s' + '%11i' * 3 + '%11.3g' * 2  # print format
-        logger_func(pf % (f'all in conf {conf_t}', all_num, all_num, match_num, accu, accu))
+        print_log(pf % (f'all in conf {conf_t}', all_num, all_num, match_num, accu, accu), logger)
         for i,cls in enumerate(['background', 'object']):
             obj_num = (class_label[:, 0] == i).sum()
             pred_num = (out[:, 0] == i).sum()
@@ -606,6 +608,6 @@ def classify_match(pred_out, class_label, conf_ts=0.5, logger_func=print):
             r = match_num/max(obj_num,0.01)
             ps.append(p)
             rs.append(r)
-            logger_func(pf % (cls, obj_num, pred_num, match_num, p, r))
+            print_log(pf % (cls, obj_num, pred_num, match_num, p, r), logger)
         # logger_func(f"there are bg number {bg_num},  object number {obj_num}, pred object is {pred_num}, obj_matched {obj_match_num},  so P/{p:.3f} R/{r:.3f}")
     return ps, rs, accus

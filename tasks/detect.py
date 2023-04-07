@@ -20,7 +20,7 @@ from models import attempt_load
 
 FILE = Path(__file__).resolve()
 
-from dataloader import IMG_FORMATS, VID_FORMATS, LoadImages, LoadStreams, Clahe
+from dataloader import IMG_FORMATS, VID_FORMATS, LoadImages, LoadStreams, clahe
 from utils import (set_logging,print_log, check_file, check_img_size, check_imshow,  colorstr, intersect_dicts,
                    increment_path, non_max_suppression_with_iof, print_args, scale_coords, strip_optimizer,
                    xyxy2xywh,Annotator, colors, save_one_box, select_device, time_sync, map_visualization)
@@ -125,7 +125,7 @@ def run(weights='checkpoints/zjs_s16.pt',  # model.pt path(s)
             im = im[:1, ...]  #20bridge 4airport
             im = im[:1, ...]*0.299  + im[1:2, ...]*0.587 + im[2:, ...]*0.114  # 22bridge 2airport
         if True:
-            im = Clahe(im)
+            im = clahe(im)
             show_pre_process = True
         im = torch.from_numpy(im).to(device)
         im = im.half() if half else im.float()  # uint8 to fp16/32

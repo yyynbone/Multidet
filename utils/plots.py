@@ -13,10 +13,9 @@ import seaborn as sn
 from threading import Thread
 from PIL import Image, ImageDraw
 from utils.label_process import xywh2xyxy, xyxy2xywh, clip_coords
-from utils.logger import set_logging, Colors
+from utils.logger import print_log, Colors
 from utils.mix_utils import  check_font, is_ascii, is_chinese, mkdir, increment_path
 
-LOGGER = set_logging(__name__)
 
 colors = Colors()  # create instance for 'from utils.plots import colors'
 
@@ -278,7 +277,7 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
 
     annotator.im.save(fname)  # save
 
-def visual_images(im, target, pred, paths=None, fname='images.jpg', names=None):
+def visual_images(im,  pred, target=None, paths=None, fname='images.jpg', names=None):
 
     """
     Plot image grid with labels and pred
@@ -306,21 +305,26 @@ def visual_images(im, target, pred, paths=None, fname='images.jpg', names=None):
     h, w, _ = im.shape  # height, width, channal
 
     # Build Image
-    im_t_p = np.full((int(h), int(2 * w), 3), 255, dtype=np.uint8)  # init
+    img_width = 1 if target is None else 2
 
+    im_t_p = np.full((int(h), int(img_width * w), 3), 255, dtype=np.uint8)  # init
+    for i in range(img_width):
+        im_t_p[0: h, i * w: (i + 1) * w, :] = im
     # add seg mask to image
     if seg_mask is not None:
         im = seg_mask * 0.3 + im * 0.7
         im = im.astype(int)
         im = np.where(im > 255, 255, im).astype(np.uint8)
-    im_t_p[0: h, 0: w, :] = im
-    im_t_p[0: h, w: 2 * w, :] = im
+
     # Annotate
     fs = int((h + w) * 0.01)  # font size
     annotator = Annotator(im_t_p, line_width=round(fs / 10), font_size=fs, pil=True)
 
-    flag = [ ' GT', ' Pred']
-    for i, box_c in enumerate([target, pred]):
+    flag = [  ' Pred', ' GT']
+    for i, box_c in enumerate([ pred, target]):
+        if box_c is None:
+            continue
+
         x, y = i*int(w), 0  # block origin
         annotator.rectangle([x, y, x + w, y + h], None, (255, 255, 255), width=2)  # borders
         if paths:
@@ -342,7 +346,7 @@ def visual_images(im, target, pred, paths=None, fname='images.jpg', names=None):
                 boxes[[1, 3]] *= h
         boxes[[0, 2]] += x
         boxes[[1, 3]] += y
-        for j, box in enumerate(boxes.astype(np.int).T.tolist()):
+        for j, box in enumerate(boxes.astype(np.int8).T.tolist()):
             cls = classes[j] # category from 1
             color = colors(cls)
             cls = names[cls] if names else cls
@@ -489,9 +493,9 @@ def plot_evolve(evolve_csv='path/to/evolve.csv'):  # from utils.plots import *; 
     plt.close()
     print(f'Saved {f}')
 
-def plot_labels(labels, names=(), save_dir=Path(''), logger=LOGGER):
+def plot_labels(labels, names=(), save_dir=Path(''), logger=None):
     # plot dataset labels
-    logger.info(f"Plotting labels to {save_dir / 'labels.jpg'}... ")
+    print_log(f"Plotting labels to {save_dir / 'labels.jpg'}... ", logger)
     c, b = labels[:, 0], labels[:, 1:].transpose()  # classes, boxes
     nc = int(c.max() + 1)  # number of classes
     x = pd.DataFrame(b.transpose(), columns=['x', 'y', 'width', 'height'])
@@ -607,7 +611,7 @@ def visual_match_pred(im, match_id, pred, target, img_path, save_dir='.', names=
         mkdir(save_path)
 
         outfile = os.path.join(save_path, img_name)
-        Thread(target=visual_images, args=(im, gt_result, bbox_result, img_path, outfile, names),
+        Thread(target=visual_images, args=(im, bbox_result, gt_result, img_path, outfile, names),
                daemon=True).start()
 
 def save_object(ims, targets, preds_float, paths=None, save_dir='exp', visual_task=0, conf_ts=0.4, f_map=None):

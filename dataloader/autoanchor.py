@@ -1,4 +1,3 @@
-# YOLOv5 🚀 by Ultralytics, GPL-3.0 license
 """
 Auto-anchor utils
 """
@@ -8,12 +7,11 @@ import numpy as np
 import torch
 import yaml
 from tqdm import tqdm
-from utils import set_logging, colorstr
+from utils import print_log, colorstr
 import matplotlib.pyplot as plt
 PREFIX = colorstr('AutoAnchor: ')
-LOGGER = set_logging(__name__)
 
-def check_anchor_order(m, loggger=LOGGER):
+def check_anchor_order(m, loggger=None):
     # Check anchor order against stride order for YOLOv5 Detect() module m, and correct if necessary
     a = m.anchors.prod(-1).view(-1)  # anchor area
     da = a[-1] - a[0]  # delta a
@@ -23,7 +21,7 @@ def check_anchor_order(m, loggger=LOGGER):
         m.anchors[:] = m.anchors.flip(0)
 
 
-def run_anchor(dataset, model, thr=4.0, imgsz=640, logger=LOGGER):
+def run_anchor(dataset, model, thr=4.0, imgsz=640, logger=None):
     det = model.module[model.module.det_head_idx] if hasattr(model, 'module') else model[model.det_head_idx]
     anchor_num = det.na * det.nl
     new_anchors = kmean_anchors(dataset, n=anchor_num, img_size=imgsz, thr=thr, gen=1000, verbose=False, logger=logger)
@@ -31,10 +29,10 @@ def run_anchor(dataset, model, thr=4.0, imgsz=640, logger=LOGGER):
     new_anchors = torch.tensor(new_anchors, device=det.anchors.device).type_as(det.anchors)
     det.anchors[:] = new_anchors.clone().view_as(det.anchors) / det.stride.to(det.anchors.device).view(-1, 1, 1)  # loss
     check_anchor_order(det, logger)
-    logger.info(str(det.anchors))
-    logger.info('New anchors saved to model. Update model config to use these anchors in the future.')
+    print_log(str(det.anchors), logger)
+    print_log('New anchors saved to model. Update model config to use these anchors in the future.', logger)
 
-def check_anchors(dataset, model, thr=4.0, imgsz=640, logger=LOGGER):
+def check_anchors(dataset, model, thr=4.0, imgsz=640, logger=None):
     # Check anchor fit to data, recompute if necessary
     m = model.module.model[-1] if hasattr(model, 'module') else model.model[-1] # Detect()
     if hasattr(m, 'anchors'):
@@ -59,26 +57,26 @@ def check_anchors(dataset, model, thr=4.0, imgsz=640, logger=LOGGER):
             bpr, aat = metric(anchors.cpu().view(-1, 2))
             s = f'\n{PREFIX}{aat:.2f} anchors/target, {bpr:.3f} Best Possible Recall (BPR). '
             if bpr > 0.98:  # threshold to recompute
-                logger.info(f'{s}Current anchors are a good fit to dataset')
-                logger.info(anchors)
+                print_log(f'{s}Current anchors are a good fit to dataset', logger)
+                print_log(anchors, logger)
 
             else:
-                logger.info(f'{s}Anchors are a poor fit to dataset, attempting to improve...')
+                print_log(f'{s}Anchors are a poor fit to dataset, attempting to improve...', logger)
                 na = m.anchors.numel() // 2  # number of anchors
                 try:
                     anchors = kmean_anchors(dataset, n=na, img_size=imgsz, thr=thr, gen=1000, verbose=False, logger=logger)
                 except Exception as e:
-                    logger.info(f'{PREFIX}ERROR: {e}')
+                    print_log(f'{PREFIX}ERROR: {e}', logger)
                 new_bpr = metric(anchors)[0]
                 if new_bpr > bpr:  # replace anchors
                     anchors = torch.tensor(anchors, device=m.anchors.device).type_as(m.anchors)
                     m.anchors[:] = anchors.clone().view_as(m.anchors) / m.stride.to(m.anchors.device).view(-1, 1, 1)  # loss
                     check_anchor_order(m, logger)
-                    logger.info(f'{PREFIX}New anchors saved to model. Update model *.yaml to use these anchors in the future.')
+                    print_log(f'{PREFIX}New anchors saved to model. Update model *.yaml to use these anchors in the future.', logger)
                 else:
-                    logger.info(f'{PREFIX}Original anchors better than new anchors. Proceeding with original anchors.')
+                    print_log(f'{PREFIX}Original anchors better than new anchors. Proceeding with original anchors.', logger)
 
-def kmean_anchors(dataset='./data/coco128.yaml', n=9, img_size=640, thr=4.0, gen=1000, verbose=True, logger=LOGGER):
+def kmean_anchors(dataset='./data/coco128.yaml', n=9, img_size=640, thr=4.0, gen=1000, verbose=True, logger=None):
     """ Creates kmeans-evolved anchors from training dataset
 
         Arguments:
@@ -119,7 +117,7 @@ def kmean_anchors(dataset='./data/coco128.yaml', n=9, img_size=640, thr=4.0, gen
         for i, x in enumerate(k):
             s += '%i,%i, ' % (round(x[0]), round(x[1]))
         if verbose:
-            logger.info(s[:-2])
+            print_log(s[:-2], logger)
         return k
 
     if isinstance(dataset, str):  # *.yaml file
@@ -138,12 +136,12 @@ def kmean_anchors(dataset='./data/coco128.yaml', n=9, img_size=640, thr=4.0, gen
     # Filter
     i = (wh0 < 3.0).any(1).sum()     #any(dim)
     if i:
-        logger.info(f'{PREFIX}WARNING: Extremely small objects found. {i} of {len(wh0)} labels are < 3 pixels in size.')
+        print_log(f'{PREFIX}WARNING: Extremely small objects found. {i} of {len(wh0)} labels are < 3 pixels in size.', logger)
     wh = wh0[(wh0 >= 2.0).any(1)]  # filter > 2 pixels
     # wh = wh * (np.random.rand(wh.shape[0], 1) * 0.9 + 0.1)  # multiply by random scale 0-1
 
     # Kmeans calculation
-    logger.info(f'{PREFIX}Running kmeans for {n} anchors on {len(wh)} points...')
+    print_log(f'{PREFIX}Running kmeans for {n} anchors on {len(wh)} points...', logger)
     s = wh.std(0)  # sigmas for whitening
     k, dist = kmeans(wh / s, n, iter=30)  # points, mean distance
     assert len(k) == n, f'{PREFIX}ERROR: scipy.cluster.vq.kmeans requested {n} points but returned only {len(k)}'

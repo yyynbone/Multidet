@@ -101,7 +101,7 @@ def clean_str(s):
 
 def print_args(name, opt,logger=LOGGER):
     # Print argparser arguments
-    logger.info(f'{colorstr(name)}: ' + ', '.join(f'{k}={v}' for k, v in vars(opt).items()))
+    print_log(f'{colorstr(name)}: ' + ', '.join(f'{k}={v}' for k, v in vars(opt).items()), logger)
 
 def print_log(msg, logger=LOGGER):
     """Print a log message.
