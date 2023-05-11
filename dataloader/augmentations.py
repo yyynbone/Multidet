@@ -1,16 +1,17 @@
 """
 Image augmentation functions
 """
-
+from pathlib import Path
 import math
 import random
-
+from copy import deepcopy
 import cv2
 import numpy as np
+from dataloader.load import img2npy
+from utils import  bbox_ioa, resample_segments, segment2box, xyxy2xywh, xywh2xyxy, clip_label
 
-from utils import   bbox_ioa, resample_segments, segment2box,xyxy2xywh, xywh2xyxy
-
-def augment_hsv(im, hgain=0.5, sgain=0.5, vgain=0.5):
+def augment_hsv(result, hgain=0.5, sgain=0.5, vgain=0.5):
+    im = result['img']
     if im.ndim==3:  # numpy array ndim, torch.dim()
         # HSV color-space augmentation
         if hgain or sgain or vgain:
@@ -26,7 +27,8 @@ def augment_hsv(im, hgain=0.5, sgain=0.5, vgain=0.5):
             im_hsv = cv2.merge((cv2.LUT(hue, lut_hue), cv2.LUT(sat, lut_sat), cv2.LUT(val, lut_val)))
             cv2.cvtColor(im_hsv, cv2.COLOR_HSV2BGR, dst=im)  # no return needed
 
-def hist_equalize(im, clahe=True, bgr=False):
+def hist_equalize(result, clahe=True, bgr=False):
+    im = result['img']
     # Equalize histogram on BGR image 'im' with im.shape(n,m,3) and range 0-255
     yuv = cv2.cvtColor(im, cv2.COLOR_BGR2YUV if bgr else cv2.COLOR_RGB2YUV)
     if clahe:
@@ -199,6 +201,93 @@ def copy_paste(result, p=0.5):
     result['instance_segments'] = segments
     result['labels'] = labels
 
+def mask_label(result):
+    f = Path(result['filename'])
+    mask_name = f.parent / f'{f.stem}_mask.jpg'
+    if mask_name.exists():
+        im_paint = img2npy(mask_name)  # BGR
+    else:
+        im = result['img']
+        max_h, max_w = im.shape[:2]
+        labels = result['labels']
+        big_label = deepcopy(labels)
+        big_label[:, 1:] = xyxy2xywh(big_label[:, 1:], 1, 1)
+        big_label[:, 3:] *= 1.1
+        big_label[:, 1:] = xywh2xyxy(big_label[:, 1:])
+        clip_label(big_label[:, 1:], max_w, max_h)
+        inpaintMask = np.zeros(im.shape[:2], np.uint8)
+        for l in big_label.astype(np.int32):
+            inpaintMask[l[2]:l[4], l[1]:l[3]] = 1
+        im_paint = cv2.inpaint(im, inpaintMask, inpaintRadius=2, flags=cv2.INPAINT_TELEA)
+        cv2.imwrite(str(mask_name), im_paint)
+    result['labels'] = np.zeros((0,5))
+    result['img'] = im_paint
+    result['filename'] = str(mask_name)
+
+    # im = result['img']
+    # max_h, max_w = im.shape[:2]
+    # labels = result['labels']
+    # big_label = deepcopy(labels)
+    # big_label[:, 1:] = xyxy2xywh(big_label[:, 1:], 1, 1)
+    # big_label[:, 3:] *= 1.5
+    # big_label[:, 1:] = xywh2xyxy(big_label[:, 1:])
+    # clip_label(big_label[:, 1:], max_w, max_h)
+    # # inpaintMask = np.zeros(im.shape[:2], np.uint8)
+    # for  l in labels.astype(np.int32):
+    #     im[l[2]:l[4], l[1]:l[3]] = 0
+    # for l, b_l in zip(labels.astype(np.int32), big_label.astype(np.int32)):
+    #     big_array = im[b_l[2]:b_l[4], b_l[1]:b_l[3]]
+    #     new = big_array[big_array > 0].flatten()
+    #     w, h = l[3]-l[1], l[4]-l[2]
+    #     a = np.random.choice(new, h*w*3)
+    #     im[l[2]:l[4], l[1]:l[3]] = a.reshape(h, w, 3)
+    #     # np.random.shuffle(im[l[2]:l[4], l[1]:l[3]]) # im[l[2]:l[4], l[1]:l[3]].mean()
+    #     # im[l[2]:l[4], l[1]:l[3]] =
+    #     # inpaintMask[l[2]:l[4], l[1]:l[3]] = 1
+    # cv2.imwrite('local_inpaint.jpg', im)
+    # res1 = cv2.inpaint(im, inpaintMask, inpaintRadius=10, flags=cv2.INPAINT_NS)
+    # res2 = cv2.inpaint(im, inpaintMask, inpaintRadius=2, flags=cv2.INPAINT_TELEA)
+    # cv2.imwrite('shuffle.jpg', im)
+    # cv2.imwrite('ns_inpaint.jpg', res1)
+    # cv2.imwrite('fast_inpaint.jpg', res2)
+    # im = result['img']
+    # max_h, max_w = im.shape[:2]
+    # labels = result['labels']
+    # r = 0.2
+    # resized_shape = (int(max_w * r), int(max_h * r))
+    # new_im = cv2.resize(im, resized_shape, cv2.INTER_LINEAR)
+    # labels[:, 1:] = xyxy2xywh(labels[:, 1:], 1/r, 1/r)
+    # labels[:, 3:] *= 1.2
+    # labels[:, 1:] = xywh2xyxy(labels[:, 1:])
+    # labels = labels.astype(np.int32)
+    # clip_label(labels[:, 1:], resized_shape[0], resized_shape[1])
+    # cv2.imwrite('resize_zero.jpg', new_im)
+    # for l in labels:
+    #     new_im[l[2]:l[4], l[1]:l[3]] = new_im[l[2]:l[4], l[1]:l[3]].mean()
+    # cv2.imwrite('resize_zero_mean.jpg', new_im)
+    # kernel = np.ones((3, 3))/9
+    # new_im = cv2.filter2D(new_im, -1, kernel)
+    # cv2.imwrite('resize_zero_mean_filter.jpg', new_im)
+    # new_im = cv2.resize(new_im,(max_w, max_h) , cv2.INTER_LINEAR)
+    # cv2.imwrite('resize_zero_mean_filter_scale.jpg', new_im)
+    # for l in labels:
+    #     im[l[2]:l[4], l[1]:l[3]] = im[l[2]:l[4], l[1]:l[3]].mean()
+
+    # kernel = np.ones((10, 10), np.uint8)
+    # erose_img = cv2.erode(im, kernel, iterations = 1)
+    # cv2.imwrite('erode.jpg', erose_img)
+    #
+    # erose_img = cv2.dilate(im, kernel, iterations = 1)
+    # cv2.imwrite('dilate.jpg', erose_img)
+    # for l in labels:
+    #     im[l[2]:l[4], l[1]:l[3]] = erose_img [l[2]:l[4], l[1]:l[3]]
+    # cv2.imwrite('now.jpg', im)
+    # im = cv2.morphologyEx(im, cv2.MORPH_CLOSE, kernel)
+    # cv2.imwrite('dilate_erode.jpg', im)
+    # result['labels'] = np.zeros((0,5))
+    # result['img'] = im
+
+
 def cutout(result, p=0.5):
     # Applies image cutout augmentation https://arxiv.org/abs/1708.04552
     im = result['img']
@@ -248,6 +337,4 @@ def box_candidates(box1, box2, wh_thr=2, ar_thr=20, area_thr=0.1, eps=1e-16):  #
     w2, h2 = box2[2] - box2[0], box2[3] - box2[1]
     ar = np.maximum(w2 / (h2 + eps), h2 / (w2 + eps))  # aspect ratio
     return (w2 > wh_thr) & (h2 > wh_thr) & (w2 * h2 / (w1 * h1 + eps) > area_thr) & (ar < ar_thr)  # candidates
-
-
 

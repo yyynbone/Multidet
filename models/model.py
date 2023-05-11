@@ -240,12 +240,12 @@ class Model(nn.Module):
                 self._profile_one_layer(m, x, dt, thops, paras)
             # print(i, m)
             if not isinstance(m, cls_head):
-                # x = m(x)  # run
-                try:
-                    x = m(x)# run
-                except:
-                    print_log(i, m, self.logger)
-                    print_log([j.shape for j in (x if isinstance(x, list) else [x])], self.logger)
+                x = m(x)  # run
+                # try:
+                #     x = m(x)# run
+                # except:
+                #     print_log(f'{i}, is {m}', self.logger)
+                #     print_log([j.shape for j in (x if isinstance(x, list) else [x])], self.logger)
             # if i==0:
             #     from utils import show_model_param
             #     show_model_param(m, path='./exp')
@@ -318,18 +318,26 @@ class Model(nn.Module):
 
     def _profile_one_layer(self, m, x, dt, thops, params):
         c = isinstance(m, det_head)  # is final layer, copy input as inplace fix
+
         o = thop.profile(m, inputs=(x.copy() if c else x,), verbose=False)[0] / 1E9 * 2 if thop else 0  # FLOPs
         t = time_sync()
-        for _ in range(10):
+        for _ in range(100):
             m(x.copy() if c else x)
-        dt.append((time_sync() - t) * 100)
+        dt.append((time_sync() - t) * 10) # so here we no need to plus 1000
         thops.append(o)
         params.append(m.np)
         if m == self.model[0]:
             print_log(f"{'time (ms)':>10s} {'GFLOPs':>10s} {'params':>10s}  {'module':>40s}   {'input_size':>30s}", self.logger)
         print_log(f'{dt[-1]:10.2f} {o:10.4f} {m.np:10.0f}  {m.type:40s}  {[j.shape for j in x] if isinstance(x, list) else x.shape}', self.logger)
         if c or isinstance(m, cls_head):
-            print_log(f"{sum(dt):10.2f} {sum(thops):>10.4f} {sum(params):>10.0f}  Total ", self.logger)
+            if isinstance(x, list):
+                device = x[0].device
+                ds = x[0].shape[0]
+            else:
+                device = x.device
+                ds = x.shape[0]
+            print_log(f"{sum(dt):10.2f} {sum(thops):>10.4f} {sum(params):>10.0f}  Total use {device} ", self.logger)
+            print_log(f"{sum(dt)/ds:10.2f} {sum(thops)/ds:>10.4f} {sum(params):>10.0f}  Per image use {device}", self.logger)
 
     def _print_biases(self):
         m = self.model[self.det_head_idx]  # Detect() module
@@ -370,7 +378,6 @@ class Model(nn.Module):
         print_log(f"Model Summary: {layer_num}layers, {n_p} parameters, {n_g} gradients,image size is {img_size}, "
                          f"{flops:.1f} GFLOPs in {next(self.parameters()).device}", self.logger)
 
-
     def _apply(self, fn):
         # Apply to(), cpu(), cuda(), half() to model tensors that are not parameters or registered buffers
         self = super()._apply(fn)
@@ -384,12 +391,16 @@ class Model(nn.Module):
                     m.anchor_grid = list(map(fn, m.anchor_grid))
         return self
 
+    def save(self, file_name):
+        torch.save(self, file_name)
+
+
 if __name__ == '__main__':
     FILE = Path(__file__).resolve()
     ROOT = FILE.parents[1]
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/c3_objclassify_s.yaml', help='model.yaml')
-    parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/c3_classify_s.yaml', help='model.yaml')
+    parser.add_argument('--device', default='cpu', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--profile', default=True, help='profile model speed')
     parser.add_argument('--test', action='store_true', help='test all yolo*.yaml')
     opt = parser.parse_args()
@@ -399,12 +410,17 @@ if __name__ == '__main__':
     device = select_device(opt.device)
     ch_in = 1
     # Create model
-    model = Model(opt.cfg, ch=ch_in, nc=1, imgsz=(640, 640)).to(device)
-    model.train()
+    if check_yaml(opt.cfg):
+        model = Model(opt.cfg, ch=ch_in, nc=1, imgsz=(640, 640)).to(device)
+        model.train()
+    else:
+        weight = ROOT/ 'checkpoints/squeezenet.pt'
+        model = attempt_load(weight, map_location=device, ch=ch_in, nc=1)
 
     # Profile
     if opt.profile:
-        img = torch.rand(8 if torch.cuda.is_available() else 1, ch_in, 224, 224).to(device)
+        # img = torch.rand(32 if torch.cuda.is_available() else 1, ch_in, 320, 320).to(device)
+        img = torch.rand(16, ch_in, 320, 320).to(device)
         y = model(img, profile=True)
 
     # Test all models

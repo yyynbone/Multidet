@@ -7,7 +7,7 @@ import numpy as np
 import torch
 import yaml
 from tqdm import tqdm
-from utils import print_log, colorstr
+from utils import print_log, colorstr, xyxy2xywh
 import matplotlib.pyplot as plt
 PREFIX = colorstr('AutoAnchor: ')
 
@@ -32,18 +32,20 @@ def run_anchor(dataset, model, thr=4.0, imgsz=640, logger=None):
     print_log(str(det.anchors), logger)
     print_log('New anchors saved to model. Update model config to use these anchors in the future.', logger)
 
-def check_anchors(dataset, model, thr=4.0, imgsz=640, logger=None):
+def check_anchors(dataset, model, thr=4.0, logger=None):
     # Check anchor fit to data, recompute if necessary
     m = model.module.model[-1] if hasattr(model, 'module') else model.model[-1] # Detect()
     if hasattr(m, 'anchors'):
         if len(m.anchors):
-            if isinstance(imgsz, int):
-                shapes = imgsz * dataset.shapes / dataset.shapes.max(1, keepdims=True)    # 640*(1280,720)/1280 = (640,360)
-            else:
-                shapes = dataset.shapes   # w,h
-                # print(shapes[np.logical_and.reduce(shapes!=np.array(imgsz),axis=1)])
-            scale = np.random.uniform(0.95, 1.05, size=(shapes.shape[0], 1))  # augment scale
-            wh = torch.tensor(np.concatenate([l[:, 3:5] * s for s, l in zip(shapes * scale, dataset.labels)])).float()  # wh
+            resized_wh = []
+            for result in dataset.results:
+                ratio_w = result.get('rect_shape', result['img_size'])[1]/ result['ori_shape'][1]
+                ratio_h = result.get('rect_shape', result['img_size'])[0] / result['ori_shape'][0]
+                wh = result['labels'][:, 3:5] * np.array([ratio_w, ratio_h])
+                resized_wh.append(wh)
+
+            scale = np.random.uniform(0.95, 1.05, size=(len(resized_wh), 1)) # augment scale
+            wh = torch.tensor(np.concatenate([l * s for s, l in zip(scale, resized_wh)])).float()  # wh
 
             def metric(k):  # compute metric
                 r = wh[:, None] / k[None]
@@ -64,7 +66,7 @@ def check_anchors(dataset, model, thr=4.0, imgsz=640, logger=None):
                 print_log(f'{s}Anchors are a poor fit to dataset, attempting to improve...', logger)
                 na = m.anchors.numel() // 2  # number of anchors
                 try:
-                    anchors = kmean_anchors(dataset, n=na, img_size=imgsz, thr=thr, gen=1000, verbose=False, logger=logger)
+                    anchors = kmean_anchors(dataset, n=na, thr=thr, gen=1000, verbose=False, logger=logger)
                 except Exception as e:
                     print_log(f'{PREFIX}ERROR: {e}', logger)
                 new_bpr = metric(anchors)[0]
@@ -112,7 +114,7 @@ def kmean_anchors(dataset='./data/coco128.yaml', n=9, img_size=640, thr=4.0, gen
         x, best = metric(k, wh0)
         bpr, aat = (best > thr).float().mean(), (x > thr).float().mean() * n  # best possible recall, anch > thr
         s = f'{PREFIX}thr={thr:.2f}: {bpr:.4f} best possible recall, {aat:.2f} anchors past thr\n' \
-            f'{PREFIX}n={n}, img_size={img_size}, metric_all={x.mean():.3f}/{best.mean():.3f}-mean/best, ' \
+            f'{PREFIX}n={n}, metric_all={x.mean():.3f}/{best.mean():.3f}-mean/best, ' \
             f'past_thr={x[x > thr].mean():.3f}-mean: '
         for i, x in enumerate(k):
             s += '%i,%i, ' % (round(x[0]), round(x[1]))
@@ -123,15 +125,15 @@ def kmean_anchors(dataset='./data/coco128.yaml', n=9, img_size=640, thr=4.0, gen
     if isinstance(dataset, str):  # *.yaml file
         with open(dataset, errors='ignore') as f:
             data_dict = yaml.safe_load(f)  # model dict
-        from utils.datasets import LoadImagesAndLabels
-        dataset = LoadImagesAndLabels(data_dict['train'], augment=True, rect=True,logger=logger)
-
-    # Get label wh
-    if isinstance(img_size, int):
-        shapes = img_size * dataset.shapes / dataset.shapes.max(1, keepdims=True)    # 640*(1280,720)/1280 = (640,360)
-    else:
-        shapes = dataset.shapes
-    wh0 = np.concatenate([l[:, 3:5] * s for s, l in zip(shapes, dataset.labels)])  # wh [[w,h],[w,h],...] in img which reshaped as shapes
+        from dataloader import LoadImagesAndLabels
+        dataset = LoadImagesAndLabels(data_dict['train'],img_size=img_size, augment=True, rect=True,logger=logger)
+    resized_wh = []
+    for result in dataset.results:
+        ratio_w = result.get('rect_shape', result['img_size'])[1] / result['ori_shape'][1]
+        ratio_h = result.get('rect_shape', result['img_size'])[0] / result['ori_shape'][0]
+        wh = result['labels'][:, 3:5] * np.array([ratio_w, ratio_h])
+        resized_wh.append(wh)
+    wh0 = torch.tensor(np.concatenate(resized_wh)).float()  # wh
 
     # Filter
     i = (wh0 < 3.0).any(1).sum()     #any(dim)

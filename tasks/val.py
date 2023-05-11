@@ -1,5 +1,6 @@
 import os
 import argparse
+import yaml
 
 from pathlib import Path
 
@@ -9,18 +10,20 @@ from torch.utils.data import DataLoader
 from utils import ROOT
 from models import attempt_load
 from loss import *
-from dataloader import LoadImagesAndLabels
+from dataloader import LoadImagesAndLabels, get_dataset
 from tasks import val
 
-from utils import ( set_logging, check_dataset, check_yaml, increment_path, select_device, print_args,print_log, select_class_tuple)
+from utils import ( set_logging, check_dataset, check_yaml, load_args, increment_path, select_device, print_args,print_log, select_class_tuple)
 FILE = Path(__file__).resolve()
 
 
 def parse_opt():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', type=str, default=ROOT / 'data/coco128.yaml', help='dataset.yaml path')
+    parser.add_argument('--data-prefile', type=str, default=ROOT / 'configs/preprocess/data_preprocess.yaml', help='data preprocess.yaml path')
     parser.add_argument('--weights', type=str,  nargs='+', default=ROOT / 'yolov5s.pt', help='model.pt path(s)')
     parser.add_argument('--cfg', default=None, help='model yaml path(s)')
+    parser.add_argument('--opt-file', type=str, default=None, help='opt file which load')
     parser.add_argument('--batch-size', type=int, default=32, help='batch size')
     parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=640, help='inference size (pixels)')
     parser.add_argument('--bgr', type=int, default=1, help='if 1 bgr,0 gray')
@@ -49,6 +52,7 @@ def parse_opt():
     parser.add_argument('--train-val-filter', action='store_true', help='filter first use the classify head')
     parser.add_argument('--val-train', action='store_true', help='valuate the train dataset')
     opt = parser.parse_args()
+    load_args(opt)
     opt.data = check_yaml(opt.data)  # check YAML
     opt.save_json |= opt.data.endswith('coco.yaml')
     opt.save_txt |= opt.save_hybrid
@@ -60,6 +64,9 @@ def main(opt):
     # Data
     data_file = Path(opt.data).stem
     opt.data = check_dataset(opt.data)  # check
+    opt.data_prefile = check_yaml(opt.data_prefile)  # check YAML
+    with open(opt.data_prefile, errors='ignore') as f:
+        data_pres = yaml.safe_load(f)  # load hyps dict
     temp_weights = opt.weights
     weight_list = []
     # for temp_weight in temp_weights:
@@ -116,19 +123,23 @@ def main(opt):
             tasks = (task, 'train')
         else:
             tasks = (task,)
+
         for opt.task in tasks:
-            opt.model.hyp['val_sample_portion']= 1
-            dataset = LoadImagesAndLabels(opt.data[opt.task], opt.imgsz, opt.batch_size, opt.logger,
-                                          hyp=opt.model.hyp,  # hyperparameters
+
+            data_pre = data_pres[opt.task]
+            task_data, data_pre = get_dataset(opt.data[opt.task], data_pre,  opt.imgsz, opt.batch_size, opt.logger,
                                           stride=int(stride),
-                                          augment=True,
-                                          rect=False,
                                           pad=.0,
                                           prefix=f'{opt.task}: ',
-                                          is_bgr=opt.bgr,
+                                          bgr=opt.bgr,
                                           filter_str=opt.filter_str,
                                           filter_bkg=opt.ignore_bkg,
                                           select_class=select_class_tuple(opt.data))
+            dataset = LoadImagesAndLabels(data_pre,
+                                          task_data,
+                                          logger=opt.logger,
+                                          bkg_ratio=getattr(opt, "bkg_ratio", 0),
+                                          obj_mask=getattr(opt,"val_obj_mask", 0))
             batch_size = min(opt.batch_size, len(dataset))
             opt.dataloader = DataLoader(dataset,
                           batch_size=batch_size,

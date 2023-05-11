@@ -253,12 +253,15 @@ class ClassifyLoss():
     def __init__(self,model, logger=None):
         use_BCE = model.hyp.get('use_BCE', True)
         use_focal = model.hyp.get('use_focal', False)
-        class_weight = model.hyp.get('cls_weight', None)
 
         self.device = next(model.parameters()).device  # get model device
         self.pos_weight = model.hyp.get('pos_weight', None)
         self.pos_gain = model.hyp.get('pos_gain', 1)
         print_log(f'ClassifyLoss bg_obj_weight is {self.pos_weight}', logger)
+        if not use_BCE and self.pos_weight is not None:
+            class_weight = [1, self.pos_weight]
+        else:
+            class_weight = None
         self.loss = CrossEntropyLoss(use_sigmoid=use_BCE, use_focal=use_focal, class_weight=class_weight).to(self.device)
         self.loss_num = 1
         self.label_pos_weight = model.hyp.get('max_pos_weight', 10)
@@ -270,12 +273,13 @@ class ClassifyLoss():
             class_label, targets, seg_img = targets
         else:
             class_label = targets
-        if self.pos_weight is None:
+
+        if self.pos_weight in [0, 'None', None]:
             ft_num = class_label.shape[0] - class_label.sum().item()   #int(tensor) or tensor.item() if tensor is a constant int
             self.label_pos_weight = round(ft_num / max(class_label.sum().item(), 1), 2)  # torch.div(ft_num, max(class_label.sum(), 1))
         else:
             self.label_pos_weight = self.pos_weight
-        # print(self.pos_weight, self.label_pos_weight)
+        # print(preds.shape, preds.dtype,  class_label.shape, class_label.dtype)
         cls_ls = self.loss(preds, class_label, pos_weight=self.pos_gain * torch.tensor([self.label_pos_weight], device=self.device), loss_style=self.loss_style)
         return cls_ls*len(preds), cls_ls.detach()
 

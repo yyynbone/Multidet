@@ -37,13 +37,13 @@ seg_ce: False #BCE # per_BCE #BCE # CE  #use CE per_BCE or BCE
 label_smoothing: 0.1   # cp:cn = 1-0.5*0.1, 0.5*0.1
 
 # bg background classify
-pos_weight: 1  # if None use self_label_weight
+pos_weight: 1.5  # if 0 use self_label_weight
 
 use_BCE: True
 use_focal: False
 loss_style: 0  # loss calculate style, [0, 1, 2] denote [others,'neg_pos_weight', 'pos_sample_aug']
-pos_schedule: step  # step or linear , step always with neg_pos_weight , linear with pos_sample_aug
+pos_schedule: linear  # step or linear , step always with neg_pos_weight , linear with pos_sample_aug
 
-# random select sample
-train_sample_portion: 1.
-val_sample_portion: 1.
+## random select sample
+#train_sample_portion: 1.
+#val_sample_portion: 1.

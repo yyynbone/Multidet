@@ -26,7 +26,7 @@ import re
 #         logger.addHandler(file_handler)
 #
 #     return logger
-def set_logging(name=None, verbose=True, filename=None,rank=-1):
+def set_logging(name=None, verbose=True, filename=None, rank=-1):
     # Sets level and returns logger
     # rank in world for Multi-GPU trainings
     # console_format = logging.Formatter('%(filename)s %(funcName)s [line:%(lineno)d]-%(levelname)s: %(message)s') # 日志格式

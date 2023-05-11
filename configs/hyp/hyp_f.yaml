@@ -45,6 +45,6 @@ use_focal: True
 loss_style: 2  # loss calculate style, [0, 1, 2] denote [others,'neg_pos_weight', 'pos_sample_aug']
 pos_schedule: linear  # step or linear , step always with neg_pos_weight , linear with pos_sample_aug
 
-# random select sample
-train_sample_portion: 1
-val_sample_portion: 1
+## random select sample
+#train_sample_portion: 1
+#val_sample_portion: 1

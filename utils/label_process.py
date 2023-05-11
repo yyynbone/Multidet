@@ -21,7 +21,7 @@ def labels_to_class_weights(labels, nc=80, empty_bins=1e16):
 
 def labels_to_image_weights(labels, nc=80, class_weights=np.ones(80)):
     # Produces image weights based on class_weights and image contents
-    class_counts = np.array([np.bincount(x[:, 0].astype(np.int8), minlength=nc) for x in labels])
+    class_counts = np.array([np.bincount(x[:, 0].astype(np.int32), minlength=nc) for x in labels])
     image_weights = (class_weights.reshape(1, nc) * class_counts).sum(1)
     # index = random.choices(range(n), weights=image_weights, k=1)  # weight image sample
     return image_weights
@@ -81,6 +81,9 @@ def xywh2xyxy(x, w=1, h=1, padw=0, padh=0):
     y[..., 3] = h * (x[..., 1] + x[..., 3] / 2) + padh  # bottom right y
     return y
 
+def clip_label(x, max_x, max_y,  min_x=0,  min_y=0):
+    np.clip(x[..., 0::2], min_x, max_x, out=x[..., 0::2])  # clip when using random_perspective()
+    np.clip(x[..., 1::2], min_y, max_y, out=x[..., 1::2])  # clip when using random_perspective()
 
 def xyxy2xywh(x, w=1, h=1, clip=False, eps=0.0):
     # Convert nx4 boxes from [x1, y1, x2, y2] to [x, y, w, h] normalized where xy1=top-left, xy2=bottom-right

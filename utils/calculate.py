@@ -261,8 +261,8 @@ def process_batch(detections, labels, iouv, div_area=None):
 
         matches = torch.Tensor(matches).to(iouv.device)
         correct[matches[:, 1].long(), 0] = (matches[:, 2:3] >= iouv)
-    if matches.shape[0]!=labels.shape[0]:
-        print('loss matched')
+    # if matches.shape[0]!=labels.shape[0]:
+    #     print(matches, labels, 'loss matched')
     if isinstance(div_area, (list, tuple)):
         tbox = xyxy2xywh(labels[:, 1:])
         area = (tbox[:, 2] * tbox[:, 3]).cpu()
@@ -366,7 +366,7 @@ def calcu_per_class(tp: object, conf: object, pred_cls: object, target_cls: obje
 
     names = [v for k, v in names.items() if k in unique_classes]  # list: only classes that have data
     names = {i: v for i, v in enumerate(names)}  # to dict
-    if plot:
+    if plot and len(py):
         plot_pr_curve(px, py, ap[:,0,:], Path(save_dir) / 'PR_curve.png', names)
 
     return p, r, pred_truth, lev_pn, ap, unique_classes.astype('int32'), lev_tn
@@ -583,9 +583,11 @@ def non_max_suppression_with_iof(prediction, conf_thres=0.25, iou_thres=0.45, cl
                     agnostic=agnostic, multi_label=multi_label, labels=labels, max_det=max_det,
                     max_nms=max_nms, merge=merge)
 
-    return nms_iof(prediction) if iof_nms else prediction
+    return nms_iof(prediction, iof_thres=0.8) if iof_nms else prediction
 
 def classify_match(pred_out, class_label, conf_ts=0.5, logger=None):
+    if pred_out.shape[1] > 1:
+        pred_out = pred_out[..., -1:]
     if not isinstance(conf_ts, (list, tuple)):
         conf_ts = [conf_ts]
     ps, rs, accus = [], [], []

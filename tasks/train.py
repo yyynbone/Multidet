@@ -7,11 +7,13 @@ from pathlib import Path
 import numpy as np
 import torch.distributed as dist
 import yaml
+from copy import deepcopy
 import torch.multiprocessing as mp
+from multiprocessing.shared_memory import ShareableList
 from loss import *
-from utils import (check_file, check_yaml, colorstr, get_latest_run, increment_path, print_args, print_mutation,
+from utils import (check_file, check_yaml, colorstr, get_latest_run, increment_path, print_args, print_mutation, load_args,
                    set_logging,  fitness, plot_evolve, select_device, torch_distributed_zero_first)
-from tasks import train
+from tasks import train, before_train
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # zjdet root directory
@@ -19,8 +21,11 @@ ROOT = FILE.parents[1]  # zjdet root directory
 def parse_opt(known=False):
     parser = argparse.ArgumentParser()
     parser.add_argument('--weights', type=str, default=ROOT / 'checkpoints/zjs_s16.pt', help='initial weights path')
+    parser.add_argument('--opt-file', type=str, default='', help='opt file which load')
     parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/zjdet_s16.yaml', help='model.yaml path')
     parser.add_argument('--data', type=str, default=ROOT / 'configs/data/dota_eo_merged.yaml', help='dataset.yaml path')
+    parser.add_argument('--data-prefile', type=str, default=ROOT / 'configs/preprocess/data_preprocess.yaml',
+                        help='data preprocess.yaml path')
     parser.add_argument('--hyp', type=str, default=ROOT / 'configs/hyp/hyp.yaml', help='hyperparameters path')
     parser.add_argument('--epochs', type=int, default=300)
     parser.add_argument('--batch-size', type=int, default=16, help='total batch size for all GPUs, -1 for autobatch')
@@ -74,18 +79,18 @@ def parse_opt(known=False):
     parser.add_argument('--artifact_alias', type=str, default='latest', help='W&B: Version of dataset artifact to use')
 
     opt = parser.parse_known_args()[0] if known else parser.parse_args()
+    load_args(opt)
     return opt
 
 
-def main(Local_rank, Local_size, opt):
-    addr, port, Node, World_size = opt.addr, opt.port, opt.node, opt.world_size
+def ready(opt):
     if opt.project == '':
         data_file = Path(opt.data).stem
         cfg_file = Path(opt.cfg).stem
-        opt.project = ROOT / 'results/train' /str(data_file)/ str(cfg_file)
+        opt.project = ROOT / 'results/train' / str(data_file) / str(cfg_file)
 
-    # Resume
-    if opt.resume  and not opt.evolve:  # resume an interrupted run
+        # Resume
+    if opt.resume and not opt.evolve:  # resume an interrupted run
         ckpt = opt.resume if isinstance(opt.resume, str) else get_latest_run()  # specified or most recent path
         assert os.path.isfile(ckpt), 'ERROR: --resume checkpoint does not exist'
         with open(Path(ckpt).parent.parent / 'opt.yaml', errors='ignore') as f:
@@ -101,36 +106,46 @@ def main(Local_rank, Local_size, opt):
             opt.exist_ok, opt.resume = opt.resume, False  # pass resume to exist_ok and disable resume
         opt.save_dir = str(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))
 
+        # print("now we in rank", local_rank) # runs in each rank
+    opt.data_prefile = check_yaml(opt.data_prefile)
+    Path(opt.save_dir).mkdir(parents=True, exist_ok=True)
+    logger = set_logging(name=FILE.stem, filename=Path(Path(opt.save_dir) / 'train.log'))
+    print_log(f"{datetime.now().strftime('%Y-%m-%d_%H:%M:%S')} Now we start training in  {logger}", logger)
+    print_args(FILE.stem, opt, logger=logger)
+    # train_dataset, val_dataset = before_train(opt.hyp, opt, logger)
+    # return opt, train_dataset, val_dataset
+    opt, train_data, train_preprocess,  val_data, val_preprocess = before_train(opt.hyp, opt, logger)
+    return opt, train_data, train_preprocess, val_data, val_preprocess
+
+def main(local_rank, local_size, opt, train_data, train_preprocess, val_data, val_preprocess):
+    print('now we are in local_rank', local_rank)
+    # local_rank could be 0-7
+    addr, port, node, world_size = opt.addr, opt.port, opt.node, opt.world_size
     # set logger save to file:
     # Checks
-    # print(f'in {Local_rank}, save_dir is {opt.save_dir}, exist_ok is {opt.exist_ok}, {opt.name}')
+    # print(f'in {local_rank}, save_dir is {opt.save_dir}, exist_ok is {opt.exist_ok}, {opt.name}')
     # DDP mode
-    device = select_device(opt.device, batch_size=opt.batch_size, rank=Local_rank)
-    if Node != -1:
-        assert torch.cuda.device_count() > Local_rank, 'insufficient CUDA devices for DDP command'
-        assert opt.batch_size % World_size == 0, '--batch-size must be multiple of CUDA device count'
+    device = select_device(opt.device, batch_size=opt.batch_size, rank=local_rank)
+    if node != -1:
+        assert torch.cuda.device_count() > local_rank, 'insufficient CUDA devices for DDP command'
+        assert opt.batch_size % world_size == 0, '--batch-size must be multiple of CUDA device count'
         # assert not opt.image_weights, '--image-weights argument is not compatible with DDP training'
         assert not opt.evolve, '--evolve argument is not compatible with DDP training'
-        torch.cuda.set_device(Local_rank)
-        device = torch.device('cuda', Local_rank)
-        Rank = Local_rank+Node*Local_size
+        torch.cuda.set_device(local_rank)
+        device = torch.device('cuda', local_rank)
+        Rank = local_rank+node*local_size
         dist.init_process_group(backend="nccl" if dist.is_nccl_available() else "gloo",
                                 init_method="tcp://{}:{}".format(addr, port),
                                 rank=Rank,
-                                world_size=World_size)
-
-
-    with torch_distributed_zero_first(Local_rank):
-        # print("now we in rank", Local_rank) # runs in each rank
-        Path(opt.save_dir).mkdir(parents=True, exist_ok=True)
-        logger = set_logging(name=FILE.stem, filename=Path(Path(opt.save_dir) / 'train.log'), rank=Local_rank)
-        print_log(f"Now we start training in{datetime.now().strftime('%Y-%m-%d_%H:%M:%S') }", logger)
-        print_args(FILE.stem, opt, logger=logger)
+                                world_size=world_size)
+    with torch_distributed_zero_first(local_rank):   # multiprocess all start
+        logger = set_logging(name=FILE.stem, filename=Path(Path(opt.save_dir) / 'train.log'), rank=local_rank)  # 需要重新定义
+            # logger.setLevel(20) # 20means logging.INFO, 但此时handle全部清空，即无file handle
 
     # Train
     if not opt.evolve:
-        _ = train(opt.hyp, opt, logger, device, Local_rank, Node, World_size)
-        if World_size > 1 and Node == 0:
+        _ = train(opt, logger, device, train_data, train_preprocess, val_data, val_preprocess, local_rank, node, world_size)
+        if world_size > 1 and node == 0:
             print_log('Destroying process group... ', logger)
             dist.destroy_process_group()
 
@@ -208,7 +223,7 @@ def main(Local_rank, Local_size, opt):
                 hyp[k] = round(hyp[k], 5)  # significant digits
 
             # Train mutation
-            results = train(hyp.copy(), opt, logger, device, Local_rank, Node, World_size)
+            results = train(hyp.copy(), opt, logger, device, local_rank, node, world_size)
             # Write mutation results
             print_mutation(results, hyp.copy(), save_dir)
 
@@ -231,16 +246,35 @@ if __name__ == "__main__":
     opt = parse_opt()
     # main(opt)
     gpus = torch.cuda.device_count()
+    if opt.world_size != gpus:
+        opt.world_size = 1 #gpus
     # opt.workers = int(opt.workers /4)
-    opt.batch_size = int(opt.batch_size*opt.world_size)
+    # opt.batch_size = int(opt.batch_size*opt.world_size)
     # print(opt.batch_size) 384
+    # opt, train_loader, val_loader = ready(opt)
+    # if opt.world_size==1:
+    #     opt.node = -1
+    #     main(-1, gpus, opt, train_dataset, val_loader)
+    # else:
+    #     # train_d = ShareableList(train_dataset)
+    #     # val_d = ShareableList(val_loader)
+    #     # mp.spawn(main,
+    #     #          args=(gpus, opt, train_d, val_d),
+    #     #          nprocs=gpus,
+    #     #          join=True)
+    #     mp.spawn(main,
+    #              args=(gpus, opt, train_dataset, val_loader),
+    #              nprocs=gpus,
+    #              join=True)
+
+    opt, train_data, train_preprocess, val_data, val_preprocess = ready(opt)
     if opt.world_size==1:
         opt.node = -1
-        main(-1,gpus,opt)
+        main(-1, gpus, opt, train_data, train_preprocess, val_data, val_preprocess)
     else:
+        # train_data = ShareableList(train_data)  # KeyError: <class 'dict'>
+        # val_data = ShareableList(val_data)
         mp.spawn(main,
-                 args=(gpus,opt),
+                 args=(gpus, opt, train_data, train_preprocess, val_data, val_preprocess),
                  nprocs=gpus,
                  join=True)
-
-

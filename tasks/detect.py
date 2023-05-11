@@ -120,16 +120,15 @@ def run(weights='checkpoints/zjs_s16.pt',  # model.pt path(s)
     show_pre_process = False
     for path, im, im0s, vid_cap, s in dataset:
         t1 = time_sync()
-        if im.shape[0]!=ch_in:
-            print(im.shape)
-            im = im[:1, ...]  #20bridge 4airport
-            im = im[:1, ...]*0.299  + im[1:2, ...]*0.587 + im[2:, ...]*0.114  # 22bridge 2airport
-        if True:
-            im = clahe(im)
-            show_pre_process = True
+        # if im.shape[0]!=ch_in:
+        #     print(im.shape)
+        #     # im = im[:1, ...]  #20bridge 4airport
+        #     im = im[:1, ...]*0.299  + im[1:2, ...]*0.587 + im[2:, ...]*0.114  # 22bridge 2airport
+        # if True:
+        #     im = clahe(im)
+        #     show_pre_process = True
         im = torch.from_numpy(im).to(device)
         im = im.half() if half else im.float()  # uint8 to fp16/32
-
         im /= 255  # 0 - 255 to 0.0 - 1.0
         # im = torch.tensor(im, dtype=torch.float32,device=device)
         if len(im.shape) == 3:
@@ -148,12 +147,19 @@ def run(weights='checkpoints/zjs_s16.pt',  # model.pt path(s)
         # pred_j = {'pred':[pred_i.cpu().numpy().tolist() for pred_i in pred]}
         if len(pred[0])==1:
             pred_out = torch.where(pred > last_conf, torch.ones_like(pred), torch.zeros_like(pred))
-            print_log(
-                f"predict value is {pred[0][0]}  as {['background', 'object'][int(pred_out[0])]}",
-                logger)
-            dt[2] += time_sync() - t3
-            seen+=1
-            map_visualization(da_seg_out[0].sigmoid(), f_path=visualize+'/')
+            for i in range(len(pred)):
+                print_log(
+                    f"predict value is {pred[i][0]}  as {['background', 'object'][int(pred_out[i])]}",
+                    logger)
+                dt[2] += time_sync() - t3
+                seen+=1
+                map_visualization(da_seg_out[i].sigmoid(), f_path=visualize)
+                if save_img:
+                    if dataset.mode == 'image':
+                        im0 = (im[i].cpu().detach().clone().permute(1, 2, 0) * 255).numpy().astype(int)
+                        p = Path(path[i] if webcam else path)  # to Path
+                        save_path = str(save_dir / p.name)  # im.jpg
+                        cv2.imwrite(save_path, im0)
         else:
             # NMS
             # pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)

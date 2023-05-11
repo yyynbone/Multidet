@@ -54,6 +54,23 @@ if __name__ == '__main__':
     # print(pt, pt_pw, bias)
     # print(loss, focal_weight)
     # print(loss*focal_weight)
-    a = 'dafdagagdagdsg'
+    import numpy as np
+    from dataloader import mask_label
+    import cv2
+
+    result = {
+        'filename': 'D:\\gitlab\\trainingsys\\data\\essential\\merged_of_auto_resized_iou48_800_800dota_and_dior\\images\\val\\dior_00872-0_800_0_800.jpg',
+        'ori_shape': (800, 800),
+        'img_size': [256, 256],
+        'labels': np.array([[0., 342., 483., 429., 547.],
+                            [0., 395., 246., 464., 319.],
+                            [0., 437.00003, 472.00003, 523., 534.],
+                            [0., 463., 159.99998, 550., 227.],
+                            [0., 534., 458.99997, 618., 519.],
+                            [0., 674., 122., 739., 202.],
+                            [0., 679., 45.999996, 741., 108.99999]])}
+    result['img'] = cv2.imread(result['filename'])
+    mask_label(result)
+
 
 

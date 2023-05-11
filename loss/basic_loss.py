@@ -118,7 +118,7 @@ def cross_entropy(pred,
     # element-wise losses
     loss = nn.functional.cross_entropy(
         pred,
-        label.flatten(),
+        label.long().flatten(),
         weight=class_weight/ sum(class_weight),
         reduction='none',
         ignore_index=ignore_index)

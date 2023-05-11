@@ -6,6 +6,8 @@ from pathlib import Path
 import warnings
 import cv2
 import matplotlib
+matplotlib.use('Agg')
+
 import os
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -14,13 +16,14 @@ from threading import Thread
 from PIL import Image, ImageDraw
 from utils.label_process import xywh2xyxy, xyxy2xywh, clip_coords
 from utils.logger import print_log, Colors
-from utils.mix_utils import  check_font, is_ascii, is_chinese, mkdir, increment_path
+from utils.check import check_font, is_ascii, is_chinese
+from utils.mix_utils import  mkdir, increment_path
 
 
 colors = Colors()  # create instance for 'from utils.plots import colors'
 
 class Annotator:
-    # YOLOv5 Annotator for train/val mosaics and jpgs and detect/hub inference annotations
+    #  Annotator for train/val mosaics and jpgs and detect/hub inference annotations
     def __init__(self, im, line_width=None, font_size=None, font='Arial.ttf', pil=False, example='abc'):
         assert im.data.contiguous, 'Image not contiguous. Apply np.ascontiguousarray(im) to Annotator() input images.'
         self.pil = pil or not is_ascii(example) or is_chinese(example)
@@ -34,12 +37,13 @@ class Annotator:
         self.lw = line_width or max(round(sum(im.shape) / 2 * 0.003), 2)  # line width
     def mark(self, box, color=2):
         if self.pil:
-            img = np.asarray(self.im)
+            img = np.array(self.im)# np.asarray(self.im)
             for i in range(3):
                 if i == color:
                     img[box[1]:box[3], box[0]:box[2], i] = 0
                 else:
                     img[box[1]:box[3], box[0]:box[2], i] = img[box[1]:box[3], box[0]:box[2], i]//2 + 127 #255//2=127
+
             self.im = Image.fromarray(img)
             self.draw = ImageDraw.Draw(self.im)
 
@@ -190,7 +194,7 @@ def map_visualization(x, f_path=Path('runs/detect/exp')):
         blocks = torch.chunk(x.cpu(), channels, dim=0)  # select batch index 0, block by channels
         plt.figure(figsize=(12, 9), tight_layout=True)
         for i, block in enumerate(blocks):
-            f = f_path + f'channel{i}_features.png'
+            f = f_path / f'channel{i}_features.png'
             # plt.imshow(block.squeeze())
             fig = plt.figure(figsize=(12, 9), tight_layout=True)
             with warnings.catch_warnings():
@@ -307,14 +311,15 @@ def visual_images(im,  pred, target=None, paths=None, fname='images.jpg', names=
     # Build Image
     img_width = 1 if target is None else 2
 
-    im_t_p = np.full((int(h), int(img_width * w), 3), 255, dtype=np.uint8)  # init
-    for i in range(img_width):
-        im_t_p[0: h, i * w: (i + 1) * w, :] = im
     # add seg mask to image
     if seg_mask is not None:
         im = seg_mask * 0.3 + im * 0.7
         im = im.astype(int)
         im = np.where(im > 255, 255, im).astype(np.uint8)
+
+    im_t_p = np.full((int(h), int(img_width * w), 3), 255, dtype=np.uint8)  # init
+    for i in range(img_width):
+        im_t_p[0: h, i * w: (i + 1) * w, :] = im
 
     # Annotate
     fs = int((h + w) * 0.01)  # font size
@@ -332,32 +337,32 @@ def visual_images(im,  pred, target=None, paths=None, fname='images.jpg', names=
 
         # boxes = xywh2xyxy(box_c[:, :4]).T
 
+        if len(box_c):
+            labels = box_c.shape[1] == 6  # labels if no conf column
+            conf = None if labels else box_c[:, 4]  # check for confidence presence (label vs pred)
 
-        labels = box_c.shape[1] == 6  # labels if no conf column
-        conf = None if labels else box_c[:, 4]  # check for confidence presence (label vs pred)
+            classes = box_c[:, -2].astype('int')
+            boxes = box_c[:, :4].T
+            matched = box_c[:, -1].astype('int')
 
-        classes = box_c[:, -2].astype('int')
-        boxes = box_c[:, :4].T
-        matched = box_c[:, -1].astype('int')
+            if boxes.shape[1]:
+                if boxes.max() <= 1.01:  # if normalized with tolerance 0.01
+                    boxes[[0, 2]] *= w  # scale to pixels
+                    boxes[[1, 3]] *= h
+            boxes[[0, 2]] += x
+            boxes[[1, 3]] += y
+            for j, box in enumerate(boxes.astype(np.int32).T.tolist()):
+                cls = classes[j] # category from 1
+                color = colors(cls)
+                cls = names[cls] if names else cls
+                if not matched[j] and target is not None and pred is not None:
+                    annotator.mark(box)
 
-        if boxes.shape[1]:
-            if boxes.max() <= 1.01:  # if normalized with tolerance 0.01
-                boxes[[0, 2]] *= w  # scale to pixels
-                boxes[[1, 3]] *= h
-        boxes[[0, 2]] += x
-        boxes[[1, 3]] += y
-        for j, box in enumerate(boxes.astype(np.int8).T.tolist()):
-            cls = classes[j] # category from 1
-            color = colors(cls)
-            cls = names[cls] if names else cls
-            if not matched[j]:
-                annotator.mark(box)
-
-            if seg_mask is None:
-                label = f'{cls}' if labels else f'{cls} {conf[j]:.1f}'
-            else:
-                label = ''
-            annotator.box_label(box, label, color=color)
+                if seg_mask is None:
+                    label = f'{cls}' if labels else f'{cls} {conf[j]:.1f}'
+                else:
+                    label = ''
+                annotator.box_label(box, label, color=color)
     annotator.im.save(fname)  # save
 
 def plot_lr_scheduler(optimizer, scheduler, epochs=300, save_dir=''):
@@ -584,33 +589,35 @@ def visual_match_pred(im, match_id, pred, target, img_path, save_dir='.', names=
         # Sort by objectness
         p_ids = np.where(pred[:, 4]>=conf_t)[0].tolist() #(array([],)[0] to list
 
-        gt_result = np.zeros((target.shape[0],target.shape[1]+1))
-        gt_result[:, :-1] = target
-
         bbox_result = np.zeros((len(p_ids), pred.shape[1]+1))
         bbox_result[:, :-1] = pred[p_ids]
+        if target is not None:
+            gt_result = np.zeros((target.shape[0], target.shape[1] + 1))
+            gt_result[:, :-1] = target
+            conf_filter_matched = []
+            for pe, p_id in enumerate(match_id[:, 1]):
+                if p_id in p_ids:
+                     conf_filter_matched.append(pe)
 
-        conf_filter_matched = []
-        for pe, p_id in enumerate(match_id[:, 1]):
-            if p_id in p_ids:
-                 conf_filter_matched.append(pe)
+            conf_filter_matched_id = match_id[conf_filter_matched]
+            gm = conf_filter_matched_id.shape[0]
+            gt_result[conf_filter_matched_id[:, 0], -1] = 1
+            bbox_result[conf_filter_matched_id[:, 1], -1] = 1
 
-        conf_filter_matched_id = match_id[conf_filter_matched]
-        gm = conf_filter_matched_id.shape[0]
-        gt_result[conf_filter_matched_id[:, 0], -1] = 1
-        bbox_result[conf_filter_matched_id[:, 1], -1] = 1
-
-        if gm!=gt_result.shape[0]:
-            is_igmatch = 'not_matched'
-        elif gm!=bbox_result.shape[0]:
-            is_igmatch = 'false_pred'
+            if gm!=gt_result.shape[0]:
+                is_igmatch = 'not_matched'
+            elif gm!=bbox_result.shape[0]:
+                is_igmatch = 'false_pred'
+            else:
+                is_igmatch = 'matched'
         else:
-            is_igmatch = 'matched'
-
+            is_igmatch = ''
+            gt_result = None
         save_path = os.path.join(save_dir, f'conf{conf_t}',  'visual_images', is_igmatch)
         mkdir(save_path)
 
         outfile = os.path.join(save_path, img_name)
+        # visual_images(im, bbox_result, gt_result, img_path, outfile, names)
         Thread(target=visual_images, args=(im, bbox_result, gt_result, img_path, outfile, names),
                daemon=True).start()
 
@@ -626,23 +633,35 @@ def save_object(ims, targets, preds_float, paths=None, save_dir='exp', visual_ta
     """
     if isinstance(ims, torch.Tensor):
         ims = ims.cpu().permute(0, 2, 3, 1).float().numpy()  # bs, _, h, w to bs, h,w, _
-    if isinstance(targets, torch.Tensor):
-        targets = targets.cpu().numpy()
-    if isinstance(preds_float, torch.Tensor):
-        preds_float = preds_float.cpu().numpy()
     if np.max(ims[0]) <= 1:
         ims *= 255  # de-normalise (optional)
+
+    if isinstance(preds_float, torch.Tensor):
+        preds_float = preds_float.cpu().numpy()
+        if preds_float.shape[1]>1:
+            preds_float = preds_float[..., -1:]
+
+    if targets is not None:
+        if isinstance(targets, torch.Tensor):
+            targets = targets.cpu().numpy()
 
     if not isinstance(conf_ts, (list, tuple)):
         conf_ts = [conf_ts]
     for conf_t in conf_ts:
-        save_dir_c  = os.path.join(save_dir,  f'conf{conf_t}', 'filter_false')
-        mkdir(save_dir_c)
         preds = np.where(preds_float > conf_t, 1, 0)
-        # i_l = np.arange(0, len(ims)).reshape(-1, 1).flatten().tolist()
-        i_l = np.arange(0, len(ims)).reshape(-1,1)[preds!=targets]
-        visual_idx = np.logical_or(preds[i_l]==1, targets[i_l]==1) if visual_task==2 else (preds if visual_task else targets)[i_l]==1
-        i_l = i_l.reshape(-1,1)[visual_idx].flatten().tolist()
+        if targets is not None:
+            f_dir = 'filter_false'
+            # i_l = np.arange(0, len(ims)).reshape(-1, 1).flatten().tolist()
+            i_l = np.arange(0, len(ims)).reshape(-1,1)[preds!=targets]
+            visual_idx = np.logical_or(preds[i_l]==1, targets[i_l]==1) if visual_task==2 else (preds if visual_task else targets)[i_l]==1
+            i_l = i_l.reshape(-1,1)[visual_idx].flatten().tolist()
+        else:
+            i_l = np.arange(0, len(ims)).reshape(-1, 1).flatten().tolist()
+            f_dir = ''
+
+        save_dir_c = os.path.join(save_dir, f'conf{conf_t}', f_dir)
+        mkdir(save_dir_c)
+
         pred_flag = [ 'pred_bg' , 'pred_object']
         for i in i_l:
             im = ims[i].astype(np.uint8)
@@ -659,4 +678,5 @@ def save_object(ims, targets, preds_float, paths=None, save_dir='exp', visual_ta
             f_path = os.path.join(save_dir_c, Path(path).name)
             annotator.im.save(f_path)  # save
             if f_map is not None:
-                map_visualization(f_map[i].sigmoid(), f_path=f_path)
+                if len(f_map[i].shape)==3:
+                    map_visualization(f_map[i].sigmoid(), f_path=f_path)

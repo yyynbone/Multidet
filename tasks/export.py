@@ -1,491 +1,174 @@
-import contextlib
+"""
+Format                  | Example                   | Export `include=(...)` argument
+---                     | ---                       | ---
+PyTorch                 | yolov5s.pt                | -
+TorchScript             | yolov5s.torchscript.pt    | 'torchscript'
+ONNX                    | yolov5s.onnx              | 'onnx'
+CoreML                  | yolov5s.mlmodel           | 'coreml'
+TensorFlow SavedModel   | yolov5s_saved_model/      | 'saved_model'
+TensorFlow GraphDef     | yolov5s.pb                | 'pb'
+TensorFlow Lite         | yolov5s.tflite            | 'tflite'
+TensorFlow.js           | yolov5s_web_model/        | 'tfjs'
+TensorRT                | yolov5s.engine            | 'engine'
+
+Usage:
+    $ python path/to/export.py --weights yolov5s.pt --include torchscript onnx coreml saved_model pb tflite tfjs
+
+Inference:
+    $ python path/to/detect.py --weights yolov5s.pt
+                                         yolov5s.torchscript.pt
+                                         yolov5s.onnx
+                                         yolov5s.mlmodel  (under development)
+                                         yolov5s_saved_model
+                                         yolov5s.pb
+                                         yolov5s.tflite
+                                         yolov5s.engine
+
+TensorFlow.js:
+    $ cd .. && git clone https://github.com/zldrobit/tfjs-yolov5-example.git && cd tfjs-yolov5-example
+    $ npm install
+    $ ln -s ../../yolov5/yolov5s_web_model public/yolov5s_web_model
+    $ npm start
+"""
+
 import json
-import os
 import platform
-import re
+import argparse
 import subprocess
 import time
-import warnings
-from collections import defaultdict
-from copy import deepcopy
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
 import torch
-from models import Detect, YOLOv8Detect, YOLOv8Segment
-from utils import colorstr, LOGGER, check_yaml, check_img_size, select_device, get_default_args, Profile, check_version
+from torch import nn
+from torch.utils.mobile_optimizer import optimize_for_mobile
+from models import Detect, YOLOv8Detect, YOLOv8Segment, attempt_load
+from utils import colorstr, LOGGER, check_img_size, select_device, \
+    file_size, check_requirements, ROOT, check_dataset, print_args, load_args
 from dataloader import LoadImages
-# import ultralytics
-# from ultralytics.nn.modules import Detect, Segment
-# from ultralytics.nn.tasks import ClassificationModel, DetectionModel, SegmentationModel, guess_model_task
-# from ultralytics.yolo.cfg import get_cfg
-# from ultralytics.yolo.data.dataloaders.stream_loaders import LoadImages
-# from ultralytics.yolo.data.utils import check_det_dataset
-# from ultralytics.yolo.utils import DEFAULT_CFG, LOGGER, callbacks, colorstr, get_default_args, yaml_save
-# from ultralytics.yolo.utils.checks import check_imgsz, check_requirements, check_version, check_yaml
-# from ultralytics.yolo.utils.files import file_size
-# from ultralytics.yolo.utils.ops import Profile
-# from ultralytics.yolo.utils.torch_utils import select_device, smart_inference_mode
 
+FILE = Path(__file__).resolve()
 MACOS = platform.system() == 'Darwin'  # macOS environment
 
 
-def export_formats():
-
-    x = [['PyTorch', '-', '.pt', True, True], ['TorchScript', 'torchscript', '.torchscript', True, True],
-         ['ONNX', 'onnx', '.onnx', True, True], ['OpenVINO', 'openvino', '_openvino_model', True, False],
-         ['TensorRT', 'engine', '.engine', False, True], ['CoreML', 'coreml', '.mlmodel', True, False],
-         ['TensorFlow SavedModel', 'saved_model', '_saved_model', True, True],
-         ['TensorFlow GraphDef', 'pb', '.pb', True, True], ['TensorFlow Lite', 'tflite', '.tflite', True, False],
-         ['TensorFlow Edge TPU', 'edgetpu', '_edgetpu.tflite', False, False],
-         ['TensorFlow.js', 'tfjs', '_web_model', False, False], ['PaddlePaddle', 'paddle', '_paddle_model', True, True]]
-    return pd.DataFrame(x, columns=['Format', 'Argument', 'Suffix', 'CPU', 'GPU'])
-
-
-def try_export(inner_func):
-
-    inner_args = get_default_args(inner_func)
-
-    def outer_func(*args, **kwargs):
-        prefix = inner_args['prefix']
-        try:
-            with Profile() as dt:
-                f, model = inner_func(*args, **kwargs)
-            LOGGER.info(f'{prefix} export success ✅ {dt.t:.1f}s, saved as {f} ({file_size(f):.1f} MB)')
-            return f, model
-        except Exception as e:
-            LOGGER.info(f'{prefix} export failure ❌ {dt.t:.1f}s: {e}')
-            return None, None
-
-    return outer_func
-
-
-class Exporter:
-    """
-    Exporter
-
-    A class for exporting a model.
-
-    Attributes:
-        args (SimpleNamespace): Configuration for the exporter.
-        save_dir (Path): Directory to save results.
-    """
-
-    def __init__(self, cfg=DEFAULT_CFG, overrides=None):
-        """
-        Initializes the Exporter class.
-
-        Args:
-            cfg (str, optional): Path to a configuration file. Defaults to DEFAULT_CFG.
-            overrides (dict, optional): Configuration overrides. Defaults to None.
-        """
-        self.args = get_cfg(cfg, overrides)
-        self.callbacks = defaultdict(list, callbacks.default_callbacks)  # add callbacks
-        callbacks.add_integration_callbacks(self)
-
-    @smart_inference_mode()
-    def __call__(self, model=None):
-        self.run_callbacks("on_export_start")
-        t = time.time()
-        format = self.args.format.lower()  # to lowercase
-        fmts = tuple(export_formats()['Argument'][1:])  # available export formats
-        flags = [x == format for x in fmts]
-        assert sum(flags), f'ERROR: Invalid format={format}, valid formats are {fmts}'
-        jit, onnx, xml, engine, coreml, saved_model, pb, tflite, edgetpu, tfjs, paddle = flags  # export booleans
-
-        # Load PyTorch model
-        self.device = select_device('cpu' if self.args.device is None else self.args.device)
-        if self.args.half:
-            if self.device.type == 'cpu' and not coreml and not xml:
-                LOGGER.info('half=True only compatible with GPU or CoreML export, i.e. use device=0 or format=coreml')
-                self.args.half = False
-            assert not self.args.dynamic, '--half not compatible with --dynamic, i.e. use either --half or --dynamic'
-
-        # Checks
-        # if self.args.batch == model.args['batch_size']:  # user has not modified training batch_size
-        self.args.batch = 1
-        self.imgsz = check_img_size(self.args.imgsz, s=model.stride)  # check image size
-        if self.args.optimize:
-            assert self.device.type == 'cpu', '--optimize not compatible with cuda devices, i.e. use --device cpu'
-
-        # Input
-        im = torch.zeros(self.args.batch, 3, *self.imgsz).to(self.device)
-        file = Path(getattr(model, 'pt_path', None) or getattr(model, 'yaml_file', None) or model.yaml['yaml_file'])
-        if file.suffix == '.yaml':
-            file = Path(file.name)
-
-        # Update model
-        model = deepcopy(model).to(self.device)
-        for p in model.parameters():
-            p.requires_grad = False
-        model.eval()
-        model.float()
-        model = model.fuse()
-        for k, m in model.named_modules():
-            if isinstance(m, (Detect, YOLOv8Detect,YOLOv8Segment)):
-                m.dynamic = self.args.dynamic
-                m.export = True
-
-        y = None
-        for _ in range(2):
-            y = model(im)  # dry runs
-        if self.args.half and not coreml and not xml:
-            im, model = im.half(), model.half()  # to FP16
-        shape = tuple((y[0] if isinstance(y, tuple) else y).shape)  # model output shape
-        LOGGER.info(
-            f"\n{colorstr('PyTorch:')} starting from {file} with output shape {shape} ({file_size(file):.1f} MB)")
-
-        # Warnings
-        warnings.filterwarnings('ignore', category=torch.jit.TracerWarning)  # suppress TracerWarning
-        warnings.filterwarnings('ignore', category=UserWarning)  # suppress shape prim::Constant missing ONNX warning
-        warnings.filterwarnings('ignore', category=DeprecationWarning)  # suppress CoreML np.bool deprecation warning
-
-        # Assign
-        self.im = im
-        self.model = model
-        self.file = file
-        self.output_shape = tuple(y.shape) if isinstance(y, torch.Tensor) else (x.shape for x in y)
-        self.metadata = {'stride': int(max(model.stride)), 'names': model.names}  # model metadata
-        self.pretty_name = self.file.stem.replace('yolo', 'YOLO')
-
-        # Exports
-        f = [''] * len(fmts)  # exported filenames
-        if jit:  # TorchScript
-            f[0], _ = self._export_torchscript()
-        if engine:  # TensorRT required before ONNX
-            f[1], _ = self._export_engine()
-        if onnx or xml:  # OpenVINO requires ONNX
-            f[2], _ = self._export_onnx()
-        if xml:  # OpenVINO
-            f[3], _ = self._export_openvino()
-        if coreml:  # CoreML
-            f[4], _ = self._export_coreml()
-        if any((saved_model, pb, tflite, edgetpu, tfjs)):  # TensorFlow formats
-            raise NotImplementedError('YOLOv8 TensorFlow export support is still under development. '
-                                      'Please consider contributing to the effort if you have TF expertise. Thank you!')
-            assert not isinstance(model, ClassificationModel), 'ClassificationModel TF exports not yet supported.'
-            nms = False
-            f[5], s_model = self._export_saved_model(nms=nms or self.args.agnostic_nms or tfjs,
-                                                     agnostic_nms=self.args.agnostic_nms or tfjs)
-            if pb or tfjs:  # pb prerequisite to tfjs
-                f[6], _ = self._export_pb(s_model)
-            if tflite or edgetpu:
-                f[7], _ = self._export_tflite(s_model,
-                                              int8=self.args.int8 or edgetpu,
-                                              data=self.args.data,
-                                              nms=nms,
-                                              agnostic_nms=self.args.agnostic_nms)
-                if edgetpu:
-                    f[8], _ = self._export_edgetpu()
-                self._add_tflite_metadata(f[8] or f[7], num_outputs=len(s_model.outputs))
-            if tfjs:
-                f[9], _ = self._export_tfjs()
-        if paddle:  # PaddlePaddle
-            f[10], _ = self._export_paddle()
-
-        # Finish
-        f = [str(x) for x in f if x]  # filter out '' and None
-        if any(f):
-            task = guess_model_task(model)
-            s = "-WARNING ⚠️ not yet supported for YOLOv8 exported models"
-            LOGGER.info(f'\nExport complete ({time.time() - t:.1f}s)'
-                        f"\nResults saved to {colorstr('bold', file.parent.resolve())}"
-                        f"\nPredict:         yolo task={task} mode=predict model={f[-1]} {s}"
-                        f"\nValidate:        yolo task={task} mode=val model={f[-1]} {s}"
-                        f"\nVisualize:       https://netron.app")
-
-        self.run_callbacks("on_export_end")
-        return f  # return list of exported files/dirs
-
-    @try_export
-    def _export_torchscript(self, prefix=colorstr('TorchScript:')):
-        # YOLOv8 TorchScript model export
+def export_torchscript(model, im, file, optimize, prefix=colorstr('TorchScript:')):
+    # YOLOv5 TorchScript model export
+    try:
         LOGGER.info(f'\n{prefix} starting export with torch {torch.__version__}...')
-        f = self.file.with_suffix('.torchscript')
+        f = file.with_suffix('.torchscript.pt')
 
-        ts = torch.jit.trace(self.model, self.im, strict=False)
-        d = {"shape": self.im.shape, "stride": int(max(self.model.stride)), "names": self.model.names}
+        ts = torch.jit.trace(model, im, strict=False)
+        d = {"shape": im.shape, "stride": int(max(model.stride)), "names": model.names}
         extra_files = {'config.txt': json.dumps(d)}  # torch._C.ExtraFilesMap()
-        if self.args.optimize:  # https://pytorch.org/tutorials/recipes/mobile_interpreter.html
-            LOGGER.info(f'{prefix} optimizing for mobile...')
-            from torch.utils.mobile_optimizer import optimize_for_mobile
-            optimize_for_mobile(ts)._save_for_lite_interpreter(str(f), _extra_files=extra_files)
-        else:
-            ts.save(str(f), _extra_files=extra_files)
-        return f, None
+        (optimize_for_mobile(ts) if optimize else ts).save(str(f), _extra_files=extra_files)
 
-    @try_export
-    def _export_onnx(self, prefix=colorstr('ONNX:')):
-        # YOLOv8 ONNX export
-        check_version( minimum='1.12.0', name='onnx')
-        import onnx  # noqa
+        LOGGER.info(f'{prefix} export success, saved as {f} ({file_size(f):.1f} MB)')
+    except Exception as e:
+        LOGGER.info(f'{prefix} export failure: {e}')
+
+
+def export_onnx(model, im, file, opset, train, dynamic, simplify, prefix=colorstr('ONNX:')):
+    # YOLOv5 ONNX export
+    try:
+        check_requirements(('onnx',))
+        import onnx
 
         LOGGER.info(f'\n{prefix} starting export with onnx {onnx.__version__}...')
-        f = str(self.file.with_suffix('.onnx'))
+        f = file.with_suffix('.onnx')
 
-        output_names = ['output0', 'output1'] if isinstance(self.model, SegmentationModel) else ['output0']
-        dynamic = self.args.dynamic
-        if dynamic:
-            dynamic = {'images': {0: 'batch', 2: 'height', 3: 'width'}}  # shape(1,3,640,640)
-            if isinstance(self.model, SegmentationModel):
-                dynamic['output0'] = {0: 'batch', 1: 'anchors'}  # shape(1,25200,85)
-                dynamic['output1'] = {0: 'batch', 2: 'mask_height', 3: 'mask_width'}  # shape(1,32,160,160)
-            elif isinstance(self.model, DetectionModel):
-                dynamic['output0'] = {0: 'batch', 1: 'anchors'}  # shape(1,25200,85)
-
-        torch.onnx.export(
-            self.model.cpu() if dynamic else self.model,  # --dynamic only compatible with cpu
-            self.im.cpu() if dynamic else self.im,
-            f,
-            verbose=False,
-            opset_version=self.args.opset,
-            do_constant_folding=True,  # WARNING: DNN inference with torch>=1.12 may require do_constant_folding=False
-            input_names=['images'],
-            output_names=output_names,
-            dynamic_axes=dynamic or None)
+        torch.onnx.export(model, im, f, verbose=False, opset_version=opset,
+                          training=torch.onnx.TrainingMode.TRAINING if train else torch.onnx.TrainingMode.EVAL,
+                          do_constant_folding=not train,
+                          input_names=['images'],
+                          output_names=['output'],
+                          dynamic_axes={'images': {0: 'batch', 2: 'height', 3: 'width'},  # shape(1,3,640,640)
+                                        'output': {0: 'batch', 1: 'anchors'}  # shape(1,25200,85)
+                                        } if dynamic else None)
 
         # Checks
         model_onnx = onnx.load(f)  # load onnx model
         onnx.checker.check_model(model_onnx)  # check onnx model
-
-        # Metadata
-        d = {'stride': int(max(self.model.stride)), 'names': self.model.names}
-        for k, v in d.items():
-            meta = model_onnx.metadata_props.add()
-            meta.key, meta.value = k, str(v)
-        onnx.save(model_onnx, f)
+        # LOGGER.info(onnx.helper.printable_graph(model_onnx.graph))  # print
 
         # Simplify
-        if self.args.simplify:
+        if simplify:
             try:
-                check_version(name='onnxsim')
+                check_requirements(('onnx-simplifier',))
                 import onnxsim
 
                 LOGGER.info(f'{prefix} simplifying with onnx-simplifier {onnxsim.__version__}...')
-                subprocess.run(f'onnxsim {f} {f}', shell=True)
+                model_onnx, check = onnxsim.simplify(
+                    model_onnx,
+                    dynamic_input_shape=dynamic,
+                    input_shapes={'images': list(im.shape)} if dynamic else None)
+                assert check, 'assert check failed'
+                onnx.save(model_onnx, f)
             except Exception as e:
                 LOGGER.info(f'{prefix} simplifier failure: {e}')
-        return f, model_onnx
+        LOGGER.info(f'{prefix} export success, saved as {f} ({file_size(f):.1f} MB)')
+        LOGGER.info(f"{prefix} run --dynamic ONNX model inference with: 'python detect.py --weights {f}'")
+    except Exception as e:
+        LOGGER.info(f'{prefix} export failure: {e}')
 
-    # @try_export
-    # def _export_openvino(self, prefix=colorstr('OpenVINO:')):
-    #     # YOLOv8 OpenVINO export
-    #     check_requirements('openvino-dev>=2022.3')  # requires openvino-dev: https://pypi.org/project/openvino-dev/
-    #
-    #     import openvino.runtime as ov  # noqa
-    #     from openvino.tools import mo  # noqa
-    #
-    #     LOGGER.info(f'\n{prefix} starting export with openvino {ov.__version__}...')
-    #     f = str(self.file).replace(self.file.suffix, f'_openvino_model{os.sep}')
-    #     f_onnx = self.file.with_suffix('.onnx')
-    #     f_ov = str(Path(f) / self.file.with_suffix('.xml').name)
-    #
-    #     ov_model = mo.convert_model(f_onnx,
-    #                                 model_name=self.pretty_name,
-    #                                 framework="onnx",
-    #                                 compress_to_fp16=self.args.half)  # export
-    #     ov.serialize(ov_model, f_ov)  # save
-    #     yaml_save(Path(f) / self.file.with_suffix('.yaml').name, self.metadata)  # add metadata.yaml
-    #     return f, None
 
-    # @try_export
-    # def _export_paddle(self, prefix=colorstr('PaddlePaddle:')):
-    #     # YOLOv8 Paddle export
-    #     check_requirements(('paddlepaddle', 'x2paddle'))
-    #     import x2paddle  # noqa
-    #     from x2paddle.convert import pytorch2paddle  # noqa
-    #
-    #     LOGGER.info(f'\n{prefix} starting export with X2Paddle {x2paddle.__version__}...')
-    #     f = str(self.file).replace(self.file.suffix, f'_paddle_model{os.sep}')
-    #
-    #     pytorch2paddle(module=self.model, save_dir=f, jit_type='trace', input_examples=[self.im])  # export
-    #     yaml_save(Path(f) / self.file.with_suffix('.yaml').name, self.metadata)  # add metadata.yaml
-    #     return f, None
+def export_coreml(model, im, file, prefix=colorstr('CoreML:')):
+    # YOLOv5 CoreML export
+    ct_model = None
+    try:
+        check_requirements(('coremltools',))
+        import coremltools as ct
 
-    # @try_export
-    # def _export_coreml(self, prefix=colorstr('CoreML:')):
-    #     # YOLOv8 CoreML export
-    #     check_requirements('coremltools>=6.0')
-    #     import coremltools as ct  # noqa
-    #
-    #     class iOSModel(torch.nn.Module):
-    #         # Wrap an Ultralytics YOLO model for iOS export
-    #         def __init__(self, model, im):
-    #             super().__init__()
-    #             b, c, h, w = im.shape  # batch, channel, height, width
-    #             self.model = model
-    #             self.nc = len(model.names)  # number of classes
-    #             if w == h:
-    #                 self.normalize = 1.0 / w  # scalar
-    #             else:
-    #                 self.normalize = torch.tensor([1.0 / w, 1.0 / h, 1.0 / w, 1.0 / h])  # broadcast (slower, smaller)
-    #
-    #         def forward(self, x):
-    #             xywh, cls = self.model(x)[0].transpose(0, 1).split((4, self.nc), 1)
-    #             return cls, xywh * self.normalize  # confidence (3780, 80), coordinates (3780, 4)
-    #
-    #     LOGGER.info(f'\n{prefix} starting export with coremltools {ct.__version__}...')
-    #     f = self.file.with_suffix('.mlmodel')
-    #
-    #     model = iOSModel(self.model, self.im).eval() if self.args.nms else self.model
-    #     ts = torch.jit.trace(model, self.im, strict=False)  # TorchScript model
-    #     ct_model = ct.convert(ts, inputs=[ct.ImageType('image', shape=self.im.shape, scale=1 / 255, bias=[0, 0, 0])])
-    #     bits, mode = (8, 'kmeans_lut') if self.args.int8 else (16, 'linear') if self.args.half else (32, None)
-    #     if bits < 32:
-    #         if MACOS:  # quantization only supported on macOS
-    #             ct_model = ct.models.neural_network.quantization_utils.quantize_weights(ct_model, bits, mode)
-    #         else:
-    #             LOGGER.info(f'{prefix} quantization only supported on macOS, skipping...')
-    #     if self.args.nms:
-    #         ct_model = self._pipeline_coreml(ct_model)
-    #
-    #     ct_model.save(str(f))
-    #     return f, ct_model
+        LOGGER.info(f'\n{prefix} starting export with coremltools {ct.__version__}...')
+        f = file.with_suffix('.mlmodel')
 
-    @try_export
-    def _export_engine(self, workspace=4, verbose=False, prefix=colorstr('TensorRT:')):
-        # YOLOv8 TensorRT export https://developer.nvidia.com/tensorrt
-        assert self.im.device.type != 'cpu', "export running on CPU but must be on GPU, i.e. use 'device=0'"
-        try:
-            import tensorrt as trt  # noqa
-        except ImportError:
-            if platform.system() == 'Linux':
-                check_requirements('nvidia-tensorrt', cmds='-U --index-url https://pypi.ngc.nvidia.com')
-            import tensorrt as trt  # noqa
+        model.train()  # CoreML exports should be placed in model.train() mode
+        ts = torch.jit.trace(model, im, strict=False)  # TorchScript model
+        ct_model = ct.convert(ts, inputs=[ct.ImageType('image', shape=im.shape, scale=1 / 255, bias=[0, 0, 0])])
+        ct_model.save(f)
 
-        check_version(trt.__version__, '7.0.0', hard=True)  # require tensorrt>=8.0.0
-        self._export_onnx()
-        onnx = self.file.with_suffix('.onnx')
+        LOGGER.info(f'{prefix} export success, saved as {f} ({file_size(f):.1f} MB)')
+    except Exception as e:
+        LOGGER.info(f'\n{prefix} export failure: {e}')
 
-        LOGGER.info(f'\n{prefix} starting export with TensorRT {trt.__version__}...')
-        assert onnx.exists(), f'failed to export ONNX file: {onnx}'
-        f = self.file.with_suffix('.engine')  # TensorRT engine file
-        logger = trt.Logger(trt.Logger.INFO)
-        if verbose:
-            logger.min_severity = trt.Logger.Severity.VERBOSE
+    return ct_model
 
-        builder = trt.Builder(logger)
-        config = builder.create_builder_config()
-        config.max_workspace_size = workspace * 1 << 30
-        # config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, workspace << 30)  # fix TRT 8.4 deprecation notice
 
-        flag = (1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH))
-        network = builder.create_network(flag)
-        parser = trt.OnnxParser(network, logger)
-        if not parser.parse_from_file(str(onnx)):
-            raise RuntimeError(f'failed to load ONNX file: {onnx}')
+def export_saved_model(model, im, file, dynamic,
+                       tf_nms=False, agnostic_nms=False, topk_per_class=100, topk_all=100, iou_thres=0.45,
+                       conf_thres=0.25, prefix=colorstr('TensorFlow saved_model:')):
+    # YOLOv5 TensorFlow saved_model export
+    keras_model = None
+    try:
+        import tensorflow as tf
+        from tensorflow import keras
 
-        inputs = [network.get_input(i) for i in range(network.num_inputs)]
-        outputs = [network.get_output(i) for i in range(network.num_outputs)]
-        for inp in inputs:
-            LOGGER.info(f'{prefix} input "{inp.name}" with shape{inp.shape} {inp.dtype}')
-        for out in outputs:
-            LOGGER.info(f'{prefix} output "{out.name}" with shape{out.shape} {out.dtype}')
-
-        if self.args.dynamic:
-            shape = self.im.shape
-            if shape[0] <= 1:
-                LOGGER.warning(f"{prefix} WARNING ⚠️ --dynamic model requires maximum --batch-size argument")
-            profile = builder.create_optimization_profile()
-            for inp in inputs:
-                profile.set_shape(inp.name, (1, *shape[1:]), (max(1, shape[0] // 2), *shape[1:]), shape)
-            config.add_optimization_profile(profile)
-
-        LOGGER.info(
-            f'{prefix} building FP{16 if builder.platform_has_fast_fp16 and self.args.half else 32} engine as {f}')
-        if builder.platform_has_fast_fp16 and self.args.half:
-            config.set_flag(trt.BuilderFlag.FP16)
-        with builder.build_engine(network, config) as engine, open(f, 'wb') as t:
-            t.write(engine.serialize())
-        return f, None
-
-    @try_export
-    def _export_saved_model(self,
-                            nms=False,
-                            agnostic_nms=False,
-                            topk_per_class=100,
-                            topk_all=100,
-                            iou_thres=0.45,
-                            conf_thres=0.25,
-                            prefix=colorstr('TensorFlow SavedModel:')):
-
-        # YOLOv8 TensorFlow SavedModel export
-        try:
-            import tensorflow as tf  # noqa
-        except ImportError:
-            check_requirements(f"tensorflow{'' if torch.cuda.is_available() else '-macos' if MACOS else '-cpu'}")
-            import tensorflow as tf  # noqa
-        check_requirements(("onnx", "onnx2tf", "sng4onnx", "onnxsim", "onnx_graphsurgeon"),
-                           cmds="--extra-index-url https://pypi.ngc.nvidia.com ")
+        from models.tf import TFDetect, TFModel
 
         LOGGER.info(f'\n{prefix} starting export with tensorflow {tf.__version__}...')
-        f = str(self.file).replace(self.file.suffix, '_saved_model')
+        f = str(file).replace('.pt', '_saved_model')
+        batch_size, ch, *imgsz = list(im.shape)  # BCHW
 
-        # Export to ONNX
-        self._export_onnx()
-        onnx = self.file.with_suffix('.onnx')
-
-        # Export to TF SavedModel
-        subprocess.run(f'onnx2tf -i {onnx} --output_signaturedefs -o {f}', shell=True)
-
-        # Load saved_model
-        keras_model = tf.saved_model.load(f, tags=None, options=None)
-
-        return f, keras_model
-
-    @try_export
-    def _export_saved_model_OLD(self,
-                                nms=False,
-                                agnostic_nms=False,
-                                topk_per_class=100,
-                                topk_all=100,
-                                iou_thres=0.45,
-                                conf_thres=0.25,
-                                prefix=colorstr('TensorFlow SavedModel:')):
-        # YOLOv8 TensorFlow SavedModel export
-        try:
-            import tensorflow as tf  # noqa
-        except ImportError:
-            check_requirements(f"tensorflow{'' if torch.cuda.is_available() else '-macos' if MACOS else '-cpu'}")
-            import tensorflow as tf  # noqa
-        # from models.tf import TFModel
-        from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2  # noqa
-
-        LOGGER.info(f'\n{prefix} starting export with tensorflow {tf.__version__}...')
-        f = str(self.file).replace(self.file.suffix, '_saved_model')
-        batch_size, ch, *imgsz = list(self.im.shape)  # BCHW
-
-        tf_models = None  # TODO: no TF modules available
-        tf_model = tf_models.TFModel(cfg=self.model.yaml, model=self.model.cpu(), nc=self.model.nc, imgsz=imgsz)
-        im = tf.zeros((batch_size, *imgsz, ch))  # BHWC order for TensorFlow
-        _ = tf_model.predict(im, nms, agnostic_nms, topk_per_class, topk_all, iou_thres, conf_thres)
-        inputs = tf.keras.Input(shape=(*imgsz, ch), batch_size=None if self.args.dynamic else batch_size)
-        outputs = tf_model.predict(inputs, nms, agnostic_nms, topk_per_class, topk_all, iou_thres, conf_thres)
-        keras_model = tf.keras.Model(inputs=inputs, outputs=outputs)
+        tf_model = TFModel(cfg=model.yaml, model=model, nc=model.nc, imgsz=imgsz)
+        im = tf.zeros((batch_size, *imgsz, 3))  # BHWC order for TensorFlow
+        y = tf_model.predict(im, tf_nms, agnostic_nms, topk_per_class, topk_all, iou_thres, conf_thres)
+        inputs = keras.Input(shape=(*imgsz, 3), batch_size=None if dynamic else batch_size)
+        outputs = tf_model.predict(inputs, tf_nms, agnostic_nms, topk_per_class, topk_all, iou_thres, conf_thres)
+        keras_model = keras.Model(inputs=inputs, outputs=outputs)
         keras_model.trainable = False
         keras_model.summary()
-        if self.args.keras:
-            keras_model.save(f, save_format='tf')
-        else:
-            spec = tf.TensorSpec(keras_model.inputs[0].shape, keras_model.inputs[0].dtype)
-            m = tf.function(lambda x: keras_model(x))  # full model
-            m = m.get_concrete_function(spec)
-            frozen_func = convert_variables_to_constants_v2(m)
-            tfm = tf.Module()
-            tfm.__call__ = tf.function(lambda x: frozen_func(x)[:4] if nms else frozen_func(x), [spec])
-            tfm.__call__(im)
-            tf.saved_model.save(tfm,
-                                f,
-                                options=tf.saved_model.SaveOptions(experimental_custom_gradients=False)
-                                if check_version(tf.__version__, '2.6') else tf.saved_model.SaveOptions())
-        return f, keras_model
+        keras_model.save(f, save_format='tf')
 
-    @try_export
-    def _export_pb(self, keras_model, file, prefix=colorstr('TensorFlow GraphDef:')):
-        # YOLOv8 TensorFlow GraphDef *.pb export https://github.com/leimao/Frozen_Graph_TensorFlow
-        import tensorflow as tf  # noqa
-        from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2  # noqa
+        LOGGER.info(f'{prefix} export success, saved as {f} ({file_size(f):.1f} MB)')
+    except Exception as e:
+        LOGGER.info(f'\n{prefix} export failure: {e}')
+
+    return keras_model
+
+
+def export_pb(keras_model, im, file, prefix=colorstr('TensorFlow GraphDef:')):
+    # YOLOv5 TensorFlow GraphDef *.pb export https://github.com/leimao/Frozen_Graph_TensorFlow
+    try:
+        import tensorflow as tf
+        from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
 
         LOGGER.info(f'\n{prefix} starting export with tensorflow {tf.__version__}...')
         f = file.with_suffix('.pb')
@@ -495,283 +178,257 @@ class Exporter:
         frozen_func = convert_variables_to_constants_v2(m)
         frozen_func.graph.as_graph_def()
         tf.io.write_graph(graph_or_graph_def=frozen_func.graph, logdir=str(f.parent), name=f.name, as_text=False)
-        return f, None
 
-    @try_export
-    def _export_tflite(self, keras_model, int8, data, nms, agnostic_nms, prefix=colorstr('TensorFlow Lite:')):
-        # YOLOv8 TensorFlow Lite export
-        import tensorflow as tf  # noqa
+        LOGGER.info(f'{prefix} export success, saved as {f} ({file_size(f):.1f} MB)')
+    except Exception as e:
+        LOGGER.info(f'\n{prefix} export failure: {e}')
+
+
+def export_tflite(keras_model, im, file, int8, data, ncalib, prefix=colorstr('TensorFlow Lite:')):
+    # YOLOv5 TensorFlow Lite export
+    try:
+        import tensorflow as tf
+
+        from models.tf import representative_dataset_gen
 
         LOGGER.info(f'\n{prefix} starting export with tensorflow {tf.__version__}...')
-        batch_size, ch, *imgsz = list(self.im.shape)  # BCHW
-        f = str(self.file).replace(self.file.suffix, '-fp16.tflite')
+        batch_size, ch, *imgsz = list(im.shape)  # BCHW
+        f = str(file).replace('.pt', '-fp16.tflite')
 
         converter = tf.lite.TFLiteConverter.from_keras_model(keras_model)
         converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS]
         converter.target_spec.supported_types = [tf.float16]
         converter.optimizations = [tf.lite.Optimize.DEFAULT]
         if int8:
-
-            def representative_dataset_gen(dataset, n_images=100):
-                # Dataset generator for use with converter.representative_dataset, returns a generator of np arrays
-                for n, (path, img, im0s, vid_cap, string) in enumerate(dataset):
-                    im = np.transpose(img, [1, 2, 0])
-                    im = np.expand_dims(im, axis=0).astype(np.float32)
-                    im /= 255
-                    yield [im]
-                    if n >= n_images:
-                        break
-
-            dataset = LoadImages(check_det_dataset(check_yaml(data))['train'], imgsz=imgsz, auto=False)
-            converter.representative_dataset = lambda: representative_dataset_gen(dataset, n_images=100)
+            dataset = LoadImages(check_dataset(data)['train'], img_size=imgsz, auto=False, is_bgr= ch==3)  # representative data
+            converter.representative_dataset = lambda: representative_dataset_gen(dataset, ncalib)
             converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
             converter.target_spec.supported_types = []
             converter.inference_input_type = tf.uint8  # or tf.int8
             converter.inference_output_type = tf.uint8  # or tf.int8
-            converter.experimental_new_quantizer = True
-            f = str(self.file).replace(self.file.suffix, '-int8.tflite')
-        if nms or agnostic_nms:
-            converter.target_spec.supported_ops.append(tf.lite.OpsSet.SELECT_TF_OPS)
+            converter.experimental_new_quantizer = False
+            f = str(file).replace('.pt', '-int8.tflite')
 
         tflite_model = converter.convert()
         open(f, "wb").write(tflite_model)
-        return f, None
+        LOGGER.info(f'{prefix} export success, saved as {f} ({file_size(f):.1f} MB)')
 
-    @try_export
-    def _export_edgetpu(self, prefix=colorstr('Edge TPU:')):
-        # YOLOv8 Edge TPU export https://coral.ai/docs/edgetpu/models-intro/
-        cmd = 'edgetpu_compiler --version'
-        help_url = 'https://coral.ai/docs/edgetpu/compiler/'
-        assert platform.system() == 'Linux', f'export only supported on Linux. See {help_url}'
-        if subprocess.run(f'{cmd} >/dev/null', shell=True).returncode != 0:
-            LOGGER.info(f'\n{prefix} export requires Edge TPU compiler. Attempting install from {help_url}')
-            sudo = subprocess.run('sudo --version >/dev/null', shell=True).returncode == 0  # sudo installed on system
-            for c in (
-                    'curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -',
-                    'echo "deb https://packages.cloud.google.com/apt coral-edgetpu-stable main" | '  # no comma
-                    'sudo tee /etc/apt/sources.list.d/coral-edgetpu.list',
-                    'sudo apt-get update',
-                    'sudo apt-get install edgetpu-compiler'):
-                subprocess.run(c if sudo else c.replace('sudo ', ''), shell=True, check=True)
-        ver = subprocess.run(cmd, shell=True, capture_output=True, check=True).stdout.decode().split()[-1]
+    except Exception as e:
+        LOGGER.info(f'\n{prefix} export failure: {e}')
 
-        LOGGER.info(f'\n{prefix} starting export with Edge TPU compiler {ver}...')
-        f = str(self.file).replace(self.file.suffix, '-int8_edgetpu.tflite')  # Edge TPU model
-        f_tfl = str(self.file).replace(self.file.suffix, '-int8.tflite')  # TFLite model
 
-        cmd = f"edgetpu_compiler -s -d -k 10 --out_dir {self.file.parent} {f_tfl}"
-        subprocess.run(cmd.split(), check=True)
-        return f, None
+def export_tfjs(keras_model, im, file, prefix=colorstr('TensorFlow.js:')):
+    # YOLOv5 TensorFlow.js export
+    try:
+        check_requirements(('tensorflowjs',))
+        import re
 
-    @try_export
-    def _export_tfjs(self, prefix=colorstr('TensorFlow.js:')):
-        # YOLOv8 TensorFlow.js export
-        check_requirements('tensorflowjs')
-        import tensorflowjs as tfjs  # noqa
+        import tensorflowjs as tfjs
 
         LOGGER.info(f'\n{prefix} starting export with tensorflowjs {tfjs.__version__}...')
-        f = str(self.file).replace(self.file.suffix, '_web_model')  # js dir
-        f_pb = self.file.with_suffix('.pb')  # *.pb path
-        f_json = Path(f) / 'model.json'  # *.json path
+        f = str(file).replace('.pt', '_web_model')  # js dir
+        f_pb = file.with_suffix('.pb')  # *.pb path
+        f_json = f + '/model.json'  # *.json path
 
-        cmd = f'tensorflowjs_converter --input_format=tf_frozen_model ' \
-              f'--output_node_names=Identity,Identity_1,Identity_2,Identity_3 {f_pb} {f}'
-        subprocess.run(cmd.split())
+        cmd = f"tensorflowjs_converter --input_format=tf_frozen_model " \
+              f"--output_node_names='Identity,Identity_1,Identity_2,Identity_3' {f_pb} {f}"
+        subprocess.run(cmd, shell=True)
 
+        json = open(f_json).read()
         with open(f_json, 'w') as j:  # sort JSON Identity_* in ascending order
             subst = re.sub(
                 r'{"outputs": {"Identity.?.?": {"name": "Identity.?.?"}, '
                 r'"Identity.?.?": {"name": "Identity.?.?"}, '
                 r'"Identity.?.?": {"name": "Identity.?.?"}, '
-                r'"Identity.?.?": {"name": "Identity.?.?"}}}', r'{"outputs": {"Identity": {"name": "Identity"}, '
+                r'"Identity.?.?": {"name": "Identity.?.?"}}}',
+                r'{"outputs": {"Identity": {"name": "Identity"}, '
                 r'"Identity_1": {"name": "Identity_1"}, '
                 r'"Identity_2": {"name": "Identity_2"}, '
-                r'"Identity_3": {"name": "Identity_3"}}}', f_json.read_text())
+                r'"Identity_3": {"name": "Identity_3"}}}',
+                json)
             j.write(subst)
-        return f, None
 
-    def _add_tflite_metadata(self, file, num_outputs):
-        # Add metadata to *.tflite models per https://www.tensorflow.org/lite/models/convert/metadata
-        with contextlib.suppress(ImportError):
-            # check_requirements('tflite_support')
-            from tflite_support import flatbuffers  # noqa
-            from tflite_support import metadata as _metadata  # noqa
-            from tflite_support import metadata_schema_py_generated as _metadata_fb  # noqa
-
-            tmp_file = Path('/tmp/meta.txt')
-            with open(tmp_file, 'w') as meta_f:
-                meta_f.write(str(self.metadata))
-
-            model_meta = _metadata_fb.ModelMetadataT()
-            label_file = _metadata_fb.AssociatedFileT()
-            label_file.name = tmp_file.name
-            model_meta.associatedFiles = [label_file]
-
-            subgraph = _metadata_fb.SubGraphMetadataT()
-            subgraph.inputTensorMetadata = [_metadata_fb.TensorMetadataT()]
-            subgraph.outputTensorMetadata = [_metadata_fb.TensorMetadataT()] * num_outputs
-            model_meta.subgraphMetadata = [subgraph]
-
-            b = flatbuffers.Builder(0)
-            b.Finish(model_meta.Pack(b), _metadata.MetadataPopulator.METADATA_FILE_IDENTIFIER)
-            metadata_buf = b.Output()
-
-            populator = _metadata.MetadataPopulator.with_model_file(file)
-            populator.load_metadata_buffer(metadata_buf)
-            populator.load_associated_files([str(tmp_file)])
-            populator.populate()
-            tmp_file.unlink()
-
-    def _pipeline_coreml(self, model, prefix=colorstr('CoreML Pipeline:')):
-        # YOLOv8 CoreML pipeline
-        import coremltools as ct  # noqa
-
-        LOGGER.info(f'{prefix} starting pipeline with coremltools {ct.__version__}...')
-        batch_size, ch, h, w = list(self.im.shape)  # BCHW
-
-        # Output shapes
-        spec = model.get_spec()
-        out0, out1 = iter(spec.description.output)
-        if MACOS:
-            from PIL import Image
-            img = Image.new('RGB', (w, h))  # img(192 width, 320 height)
-            # img = torch.zeros((*opt.img_size, 3)).numpy()  # img size(320,192,3) iDetection
-            out = model.predict({'image': img})
-            out0_shape = out[out0.name].shape
-            out1_shape = out[out1.name].shape
-        else:  # linux and windows can not run model.predict(), get sizes from pytorch output y
-            out0_shape = self.output_shape[1], self.output_shape[2] - 5  # (3780, 80)
-            out1_shape = self.output_shape[1], 4  # (3780, 4)
-
-        # Checks
-        names = self.metadata['names']
-        nx, ny = spec.description.input[0].type.imageType.width, spec.description.input[0].type.imageType.height
-        na, nc = out0_shape
-        # na, nc = out0.type.multiArrayType.shape  # number anchors, classes
-        assert len(names) == nc, f'{len(names)} names found for nc={nc}'  # check
-
-        # Define output shapes (missing)
-        out0.type.multiArrayType.shape[:] = out0_shape  # (3780, 80)
-        out1.type.multiArrayType.shape[:] = out1_shape  # (3780, 4)
-        # spec.neuralNetwork.preprocessing[0].featureName = '0'
-
-        # Flexible input shapes
-        # from coremltools.models.neural_network import flexible_shape_utils
-        # s = [] # shapes
-        # s.append(flexible_shape_utils.NeuralNetworkImageSize(320, 192))
-        # s.append(flexible_shape_utils.NeuralNetworkImageSize(640, 384))  # (height, width)
-        # flexible_shape_utils.add_enumerated_image_sizes(spec, feature_name='image', sizes=s)
-        # r = flexible_shape_utils.NeuralNetworkImageSizeRange()  # shape ranges
-        # r.add_height_range((192, 640))
-        # r.add_width_range((192, 640))
-        # flexible_shape_utils.update_image_size_range(spec, feature_name='image', size_range=r)
-
-        # Print
-        print(spec.description)
-
-        # Model from spec
-        model = ct.models.MLModel(spec)
-
-        # 3. Create NMS protobuf
-        nms_spec = ct.proto.Model_pb2.Model()
-        nms_spec.specificationVersion = 5
-        for i in range(2):
-            decoder_output = model._spec.description.output[i].SerializeToString()
-            nms_spec.description.input.add()
-            nms_spec.description.input[i].ParseFromString(decoder_output)
-            nms_spec.description.output.add()
-            nms_spec.description.output[i].ParseFromString(decoder_output)
-
-        nms_spec.description.output[0].name = 'confidence'
-        nms_spec.description.output[1].name = 'coordinates'
-
-        output_sizes = [nc, 4]
-        for i in range(2):
-            ma_type = nms_spec.description.output[i].type.multiArrayType
-            ma_type.shapeRange.sizeRanges.add()
-            ma_type.shapeRange.sizeRanges[0].lowerBound = 0
-            ma_type.shapeRange.sizeRanges[0].upperBound = -1
-            ma_type.shapeRange.sizeRanges.add()
-            ma_type.shapeRange.sizeRanges[1].lowerBound = output_sizes[i]
-            ma_type.shapeRange.sizeRanges[1].upperBound = output_sizes[i]
-            del ma_type.shape[:]
-
-        nms = nms_spec.nonMaximumSuppression
-        nms.confidenceInputFeatureName = out0.name  # 1x507x80
-        nms.coordinatesInputFeatureName = out1.name  # 1x507x4
-        nms.confidenceOutputFeatureName = 'confidence'
-        nms.coordinatesOutputFeatureName = 'coordinates'
-        nms.iouThresholdInputFeatureName = 'iouThreshold'
-        nms.confidenceThresholdInputFeatureName = 'confidenceThreshold'
-        nms.iouThreshold = 0.45
-        nms.confidenceThreshold = 0.25
-        nms.pickTop.perClass = True
-        nms.stringClassLabels.vector.extend(names.values())
-        nms_model = ct.models.MLModel(nms_spec)
-
-        # 4. Pipeline models together
-        pipeline = ct.models.pipeline.Pipeline(input_features=[('image', ct.models.datatypes.Array(3, ny, nx)),
-                                                               ('iouThreshold', ct.models.datatypes.Double()),
-                                                               ('confidenceThreshold', ct.models.datatypes.Double())],
-                                               output_features=['confidence', 'coordinates'])
-        pipeline.add_model(model)
-        pipeline.add_model(nms_model)
-
-        # Correct datatypes
-        pipeline.spec.description.input[0].ParseFromString(model._spec.description.input[0].SerializeToString())
-        pipeline.spec.description.output[0].ParseFromString(nms_model._spec.description.output[0].SerializeToString())
-        pipeline.spec.description.output[1].ParseFromString(nms_model._spec.description.output[1].SerializeToString())
-
-        # Update metadata
-        pipeline.spec.specificationVersion = 5
-        pipeline.spec.description.metadata.versionString = f'Ultralytics YOLOv{ultralytics.__version__}'
-        pipeline.spec.description.metadata.shortDescription = f'Ultralytics {self.pretty_name} CoreML model'
-        pipeline.spec.description.metadata.author = 'Ultralytics (https://ultralytics.com)'
-        pipeline.spec.description.metadata.license = 'GPL-3.0 license (https://ultralytics.com/license)'
-        pipeline.spec.description.metadata.userDefined.update({
-            'IoU threshold': str(nms.iouThreshold),
-            'Confidence threshold': str(nms.confidenceThreshold)})
-
-        # Save the model
-        model = ct.models.MLModel(pipeline.spec)
-        model.input_description['image'] = 'Input image'
-        model.input_description['iouThreshold'] = f'(optional) IOU threshold override (default: {nms.iouThreshold})'
-        model.input_description['confidenceThreshold'] = \
-            f'(optional) Confidence threshold override (default: {nms.confidenceThreshold})'
-        model.output_description['confidence'] = 'Boxes × Class confidence (see user-defined metadata "classes")'
-        model.output_description['coordinates'] = 'Boxes × [x, y, width, height] (relative to image size)'
-        LOGGER.info(f'{prefix} pipeline success')
-        return model
-
-    def run_callbacks(self, event: str):
-        for callback in self.callbacks.get(event, []):
-            callback(self)
+        LOGGER.info(f'{prefix} export success, saved as {f} ({file_size(f):.1f} MB)')
+    except Exception as e:
+        LOGGER.info(f'\n{prefix} export failure: {e}')
 
 
-def export(cfg=DEFAULT_CFG):
-    cfg.model = cfg.model or "yolov8n.yaml"
-    cfg.format = cfg.format or "torchscript"
+def export_engine(model, im, file, train, half, simplify, workspace=4, verbose=False, prefix=colorstr('TensorRT:')):
+    try:
+        check_requirements(('tensorrt',))
+        import tensorrt as trt
 
-    # exporter = Exporter(cfg)
-    #
-    # model = None
-    # if isinstance(cfg.model, (str, Path)):
-    #     if Path(cfg.model).suffix == '.yaml':
-    #         model = DetectionModel(cfg.model)
-    #     elif Path(cfg.model).suffix == '.pt':
-    #         model = attempt_load_weights(cfg.model, fuse=True)
-    #     else:
-    #         TypeError(f'Unsupported model type {cfg.model}')
-    # exporter(model=model)
+        opset = (12, 13)[trt.__version__[0] == '8']  # test on TensorRT 7.x and 8.x
+        export_onnx(model, im, file, opset, train, False, simplify)
+        onnx = file.with_suffix('.onnx')
+        assert onnx.exists(), f'failed to export ONNX file: {onnx}'
 
-    from ultralytics import YOLO
-    model = YOLO(cfg.model)
-    model.export(**vars(cfg))
+        LOGGER.info(f'\n{prefix} starting export with TensorRT {trt.__version__}...')
+        f = str(file).replace('.pt', '.engine')  # TensorRT engine file
+        logger = trt.Logger(trt.Logger.INFO)
+        if verbose:
+            logger.min_severity = trt.Logger.Severity.VERBOSE
+
+        builder = trt.Builder(logger)
+        config = builder.create_builder_config()
+        config.max_workspace_size = workspace * 1 << 30
+
+        flag = (1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH))
+        network = builder.create_network(flag)
+        parser = trt.OnnxParser(network, logger)
+        if not parser.parse_from_file(str(onnx)):
+            raise RuntimeError(f'failed to load ONNX file: {onnx}')
+
+        inputs = [network.get_input(i) for i in range(network.num_inputs)]
+        outputs = [network.get_output(i) for i in range(network.num_outputs)]
+        LOGGER.info(f'{prefix} Network Description:')
+        for inp in inputs:
+            LOGGER.info(f'{prefix}\tinput "{inp.name}" with shape {inp.shape} and dtype {inp.dtype}')
+        for out in outputs:
+            LOGGER.info(f'{prefix}\toutput "{out.name}" with shape {out.shape} and dtype {out.dtype}')
+
+        half &= builder.platform_has_fast_fp16
+        LOGGER.info(f'{prefix} building FP{16 if half else 32} engine in {f}')
+        if half:
+            config.set_flag(trt.BuilderFlag.FP16)
+        with builder.build_engine(network, config) as engine, open(f, 'wb') as t:
+            t.write(engine.serialize())
+        LOGGER.info(f'{prefix} export success, saved as {f} ({file_size(f):.1f} MB)')
+
+    except Exception as e:
+        LOGGER.info(f'\n{prefix} export failure: {e}')
+
+@torch.no_grad()
+def run(data=ROOT / 'data/coco128.yaml',  # 'dataset.yaml path'
+        weights=ROOT / 'yolov5s.pt',  # weights path
+        imgsz=(640, 640),  # image (height, width)
+        bgr=1,
+        batch_size=1,  # batch size
+        device='cpu',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
+        include=('torchscript', 'onnx', 'coreml'),  # include formats
+        half=False,  # FP16 half-precision export
+        inplace=False,  # set YOLOv5 Detect() inplace=True
+        train=False,  # model.train() mode
+        optimize=False,  # TorchScript: optimize for mobile
+        int8=False,  # CoreML/TF INT8 quantization
+        dynamic=False,  # ONNX/TF: dynamic axes
+        simplify=False,  # ONNX: simplify model
+        opset=12,  # ONNX: opset version
+        verbose=False,  # TensorRT: verbose log
+        workspace=4,  # TensorRT: workspace size (GB)
+        topk_per_class=100,  # TF.js NMS: topk per class to keep
+        topk_all=100,  # TF.js NMS: topk for all classes to keep
+        iou_thres=0.45,  # TF.js NMS: IoU threshold
+        conf_thres=0.25,  # TF.js NMS: confidence threshold,
+        **kargs
+        ):
+    if bgr:
+        ch_in = 3
+    else:
+        ch_in = 1
+    t = time.time()
+    include = [x.lower() for x in include]
+    tf_exports = list(x in include for x in ('saved_model', 'pb', 'tflite', 'tfjs'))  # TensorFlow exports
+    imgsz *= 2 if len(imgsz) == 1 else 1  # expand
+    file = Path(weights)
+
+    # Load PyTorch model
+    device = select_device(device)
+    assert not (device.type == 'cpu' and half), '--half only compatible with GPU export, i.e. use --device 0'
+    model = attempt_load(weights, map_location=device, inplace=True, fuse=True)  # load FP32 model
+    # nc, names = model.nc, model.names  # number of classes, class names
+
+    # Input
+    gs = int(model.stride.max()) if hasattr(model, 'stride') else 32  # grid size (max stride)
+    imgsz = [check_img_size(x, gs) for x in imgsz]  # verify img_size are gs-multiples
+    im = torch.zeros(batch_size, ch_in, *imgsz).to(device)  # image size(1,3,320,192) BCHW iDetection
+
+    # Update model
+    if half:
+        im, model = im.half(), model.half()  # to FP16
+    model.train() if train else model.eval()  # training mode = no Detect() layer grid construction
+    for k, m in model.named_modules():
+        # if isinstance(m, Conv):  # assign export-friendly activations
+        #     if isinstance(m.act, nn.SiLU):
+        #         m.act = SiLU()
+        # elif isinstance(m, Detect):
+        #     m.inplace = inplace
+        #     m.onnx_dynamic = dynamic
+        #     # m.forward = m.forward_export  # assign forward (optional)
+        if isinstance(m, Detect):
+            m.inplace = inplace
+            m.onnx_dynamic = dynamic
+    for _ in range(2):
+        y = model(im)  # dry runs
+    LOGGER.info(f"\n{colorstr('PyTorch:')} starting from {file} ({file_size(file):.1f} MB)")
+
+    # Exports
+    if 'torchscript' in include:
+        export_torchscript(model, im, file, optimize)
+    if 'onnx' in include:
+        export_onnx(model, im, file, opset, train, dynamic, simplify)
+    if 'engine' in include:
+        export_engine(model, im, file, train, half, simplify, workspace, verbose)
+    if 'coreml' in include:
+        export_coreml(model, im, file)
+
+    # TensorFlow Exports
+    if any(tf_exports):
+        pb, tflite, tfjs = tf_exports[1:]
+        assert not (tflite and tfjs), 'TFLite and TF.js models must be exported separately, please pass only one type.'
+        model = export_saved_model(model, im, file, dynamic, tf_nms=tfjs, agnostic_nms=tfjs,
+                                   topk_per_class=topk_per_class, topk_all=topk_all, conf_thres=conf_thres,
+                                   iou_thres=iou_thres)  # keras model
+        if pb or tfjs:  # pb prerequisite to tfjs
+            export_pb(model, im, file)
+        if tflite:
+            export_tflite(model, im, file, int8=int8, data=data, ncalib=100)
+        if tfjs:
+            export_tfjs(model, im, file)
+
+    # Finish
+    LOGGER.info(f'\nExport complete ({time.time() - t:.2f}s)'
+                f"\nResults saved to {colorstr('bold', file.parent.resolve())}"
+                f'\nVisualize with https://netron.app')
+
+
+def parse_opt():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--data', type=str, default=ROOT / 'data/coco128.yaml', help='dataset.yaml path')
+    parser.add_argument('--weights', type=str, default=ROOT / 'checkpoints/zjs_s16.pt', help='weights path')
+    parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[640, 640], help='image (h, w)')
+    parser.add_argument('--bgr', type=int, default=1, help='if 1 bgr,0 gray')
+    parser.add_argument('--batch-size', type=int, default=1, help='batch size')
+    parser.add_argument('--device', default='cpu', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--half', action='store_true', help='FP16 half-precision export')
+    parser.add_argument('--inplace', action='store_true', help='set YOLOv5 Detect() inplace=True')
+    parser.add_argument('--train', action='store_true', help='model.train() mode')
+    parser.add_argument('--optimize', action='store_true', help='TorchScript: optimize for mobile')
+    parser.add_argument('--int8', action='store_true', help='CoreML/TF INT8 quantization')
+    parser.add_argument('--dynamic', action='store_true', help='ONNX/TF: dynamic axes')
+    parser.add_argument('--simplify', action='store_true', help='ONNX: simplify model')
+    parser.add_argument('--opset', type=int, default=13, help='ONNX: opset version')
+    parser.add_argument('--verbose', action='store_true', help='TensorRT: verbose log')
+    parser.add_argument('--workspace', type=int, default=4, help='TensorRT: workspace size (GB)')
+    parser.add_argument('--topk-per-class', type=int, default=100, help='TF.js NMS: topk per class to keep')
+    parser.add_argument('--topk-all', type=int, default=100, help='TF.js NMS: topk for all classes to keep')
+    parser.add_argument('--iou-thres', type=float, default=0.45, help='TF.js NMS: IoU threshold')
+    parser.add_argument('--conf-thres', type=float, default=0.25, help='TF.js NMS: confidence threshold')
+    parser.add_argument('--include', nargs='+',
+                        default=['torchscript', 'onnx'],
+                        help='available formats are (torchscript, onnx, engine, coreml, saved_model, pb, tflite, tfjs)')
+    parser.add_argument('--opt-file', type=str, default=None, help='opt file which load')
+    opt = parser.parse_args()
+    load_args(opt)
+    print_args(FILE.stem, opt)
+    return opt
+
+
+def main(opt):
+    run(**vars(opt))
 
 
 if __name__ == "__main__":
-    """
-    CLI:
-    yolo mode=export model=yolov8n.yaml format=onnx
-    """
-    export()
+    opt = parse_opt()
+    main(opt)
+

@@ -1,47 +1,20 @@
-import sys
+
 import torch
 import inspect
-from utils.label_process import xyxy2xywh
 import glob
-import platform
+
 from pathlib import Path
-from PIL import ImageFont
+
 import re
 import datetime
 import math
 import os
 import json
+from utils.label_process import xyxy2xywh
+
 def mkdir(path):
     if not os.path.exists(path):
         os.makedirs(path)
-
-def file_size(path):
-    # Return file/dir size (MB)
-    mb = 1 << 20  # bytes to MiB (1024 ** 2)
-    path = Path(path)
-    if path.is_file():
-        return path.stat().st_size / mb
-    elif path.is_dir():
-        return sum(f.stat().st_size for f in path.glob('**/*') if f.is_file()) / mb
-    else:
-        return 0.0
-
-def check_font(font='Arial.ttf', size=10):
-    # Return a PIL TrueType Font, downloading to CONFIG_DIR if necessary
-    font = Path(__file__).parent/font
-    cfg = {'Windows': 'AppData/Roaming', 'Linux': '.config', 'Darwin': 'Library/Application Support'}  # 3 OS dirs
-    path = Path.home() / cfg.get(platform.system(), '')  # OS-specific config dir
-    font = font if font.exists() else (path / font.name)
-    return ImageFont.truetype(str(font) if font.exists() else font.name, size)
-
-def is_ascii(s=''):
-    # Is string composed of all ASCII (no UTF) characters? (note str().isascii() introduced in python 3.7)
-    s = str(s)  # convert list, tuple, None, etc. to str
-    return len(s.encode().decode('ascii', 'ignore')) == len(s)
-
-def is_chinese(s='人工智能'):
-    # Is string composed of any Chinese characters?
-    return re.search('[\u4e00-\u9fff]', s)
 
 def get_default_args(func):
     # Get func() default arguments
@@ -194,3 +167,4 @@ def iter_extend_axis(x, filter_bool):
         new_x[filter_bool] = x
         x = new_x
     return x
+
