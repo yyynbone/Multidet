@@ -1,0 +1,10 @@
+weights:  results/train/merge_scls/squeezenet/exp5/weights/best_precision.pt
+data: merge_scls.yaml
+verbose: True
+imgsz:
+- 256
+bgr: 0
+iou_thres: 0.45
+conf_thres: 0.25
+include:
+  - onnx

@@ -1,0 +1,25 @@
+weights:  results/train/merge_scls/c3_classify_s/exp10/weights/best_precision.pt
+cfg: c3_classify_s.yaml
+data: merge_scls.yaml
+data_prefile: data_preprocess.yaml
+hyp: hyp_linear_augloss.yaml
+batch_size: 256
+bgr: 0
+last_conf: 0.6
+verbose: True
+visual_matched: False
+imgsz:
+- 256
+div_area:
+- 25
+- 50
+epochs: 1000
+rect: false
+world_size: 4
+loss: ClassifyLoss
+loss_supervision: 50
+patience: 800
+bkg_ratio: 1
+train_obj_mask: 1
+val_obj_mask: 0
+resume: False

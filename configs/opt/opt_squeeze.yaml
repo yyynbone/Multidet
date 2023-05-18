@@ -1,0 +1,24 @@
+weights: results/train/merge_scls/squeezenet/exp2/weights/last.pt  # checkpoints/squeezenet.pt
+cfg: squeezenet.yaml
+data: merge_scls.yaml
+data_prefile: data_preprocess.yaml
+hyp: hyp.yaml
+batch_size: 256
+bgr: 0
+last_conf: 0.6
+verbose: True
+visual_matched: True
+imgsz:
+- 256
+div_area:
+- 25
+- 50
+epochs: 1000
+rect: false
+world_size: 8
+loss: ClassifyLoss
+loss_supervision: 50
+patience: 800
+bkg_ratio: 1
+train_obj_mask: 1
+val_obj_mask: 0

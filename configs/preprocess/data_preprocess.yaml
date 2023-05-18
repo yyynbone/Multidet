@@ -1,0 +1,60 @@
+
+train:
+  mosaic: .3  # image mosaic (probability)
+  mask_label: True
+  mixup: 0.0  # image mixup (probability)
+  copy_paste: 0.0  # segment copy-paste (probability)
+  albumentations:
+    transforms:
+      - Blur:
+          p: 0.01
+      - MedianBlur:
+          p: 0.01
+      - ToGray:
+          p: 0.01
+      - CLAHE:
+          p: 0.01
+      - RandomBrightnessContrast:
+          p: 0.00
+      - RandomGamma:
+          p: 0.00
+      - ImageCompression:
+          quality_lower: 75
+          p: 0.0
+    bbox_params:
+      BboxParams:
+        format: 'pascal_voc'
+        label_fields: ['class_labels']
+
+  sample_portion: 1. # random select sample
+  rect: False
+  augment: True
+  label: True
+  transform:
+    resize:
+    adapt_pad:
+      auto: False
+      scaleup: True
+    random_perspective:
+      degrees: 0.0  # image rotation (+/- deg)
+      translate: 0.1  # image translation (+/- fraction)
+      scale: 0.5  # image scale (+/- gain)
+      shear: 0.0  # image shear (+/- deg)
+      perspective: 0.0  # image perspective (+/- fraction), range 0-0.001
+    album:
+    augment_hsv:
+      hgain: 0.015  # image HSV-Hue augmentation (fraction)
+      sgain: 0.7  # image HSV-Saturation augmentation (fraction)
+      vgain: 0.4  # image HSV-Value augmentation (fraction)
+    flip:
+      p_ud: 0.0  # image flip up-down (probability)
+      p_lr: 0.5  # image flip left-right (probability)
+val:
+  sample_portion: 1. # random select sample
+  label: True
+  rect: False
+  augment: False
+  transform:
+    resize:
+    adapt_pad:
+      auto: False

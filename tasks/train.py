@@ -95,7 +95,7 @@ def ready(opt):
         assert os.path.isfile(ckpt), 'ERROR: --resume checkpoint does not exist'
         with open(Path(ckpt).parent.parent / 'opt.yaml', errors='ignore') as f:
             opt = argparse.Namespace(**yaml.safe_load(f))  # replace
-        opt.cfg, opt.weights, opt.resume = '', ckpt, True  # reinstate
+        opt.weights, opt.resume =  ckpt, True  # reinstate
 
     else:
         opt.data, opt.cfg, opt.hyp, opt.weights, opt.project = \

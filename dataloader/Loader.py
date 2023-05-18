@@ -7,7 +7,7 @@ from copy import deepcopy
 from torch.utils.data import Dataset, DataLoader
 
 from dataloader.load import select_image, select_video, load_images, load_labels, load_image_result, \
-    rect_shape, load_mosaic, read_image
+    rect_shape, load_mosaic, read_image, load_big2_small
 
 from dataloader.transform import Transfrom, gray
 from dataloader.augmentations import mask_label
@@ -209,7 +209,7 @@ class LoadImagesAndLabels(Dataset):
         random.shuffle(self.indices)
         self.bkg_ratio = bkg_ratio
     """
-    def __init__(self, pre_process, results, logger=None, bkg_ratio=0, obj_mask=0):
+    def __init__(self, pre_process, results, logger=None, bkg_ratio=0, obj_mask=0, cropped_imgsz=False):
 
         self.mask_labels = pre_process.get('mask_label', False)
         self.mosaic = pre_process.get('mosaic', 0)
@@ -233,6 +233,9 @@ class LoadImagesAndLabels(Dataset):
 
         self.bkg_ratio = bkg_ratio
         self.obj_mask = obj_mask
+        self.cropped_imgsz = cropped_imgsz
+        if self.cropped_imgsz:
+            self.origin_results = deepcopy(self.results)
 
 
     def format(self, result):
@@ -259,15 +262,23 @@ class LoadImagesAndLabels(Dataset):
         return img, labels, class_label, trans_result
 
     def index_shuffle(self):
-        self.indices = np.arange(len(self.results))
-        if self.bkg_ratio:
-            indices = self.obj_index
-            obj_num = len(indices)
-            bkg_indices = np.random.choice(self.bkg_index, int(obj_num*self.bkg_ratio))
-            self.indices = np.concatenate((indices, bkg_indices))
-        if self.obj_mask:
-            mask_indices = -(1 + self.obj_index)
-            self.indices = np.concatenate((self.indices, mask_indices))
+        if self.cropped_imgsz:
+            # crop on line
+            self.results = []
+            for result in self.origin_results:
+                cropped_results = load_big2_small(result, self.cropped_imgsz)
+                self.results.extend(cropped_results)
+            self.indices = np.arange(len(self.results))
+        else:
+            self.indices = np.arange(len(self.results))
+            if self.bkg_ratio:
+                indices = self.obj_index
+                obj_num = len(indices)
+                bkg_indices = np.random.choice(self.bkg_index, int(obj_num*self.bkg_ratio))
+                self.indices = np.concatenate((indices, bkg_indices))
+            if self.obj_mask:
+                mask_indices = -(1 + self.obj_index)
+                self.indices = np.concatenate((self.indices, mask_indices))
         # self.indices = -(1 + self.obj_index)
         random.shuffle(self.indices)
 

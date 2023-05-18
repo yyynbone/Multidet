@@ -399,7 +399,7 @@ if __name__ == '__main__':
     FILE = Path(__file__).resolve()
     ROOT = FILE.parents[1]
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/c3_classify_s.yaml', help='model.yaml')
+    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/squeezenet_sppf_fpn.yaml', help='model.yaml')
     parser.add_argument('--device', default='cpu', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--profile', default=True, help='profile model speed')
     parser.add_argument('--test', action='store_true', help='test all yolo*.yaml')
@@ -420,7 +420,7 @@ if __name__ == '__main__':
     # Profile
     if opt.profile:
         # img = torch.rand(32 if torch.cuda.is_available() else 1, ch_in, 320, 320).to(device)
-        img = torch.rand(16, ch_in, 320, 320).to(device)
+        img = torch.rand(1, ch_in, 208, 208).to(device)
         y = model(img, profile=True)
 
     # Test all models

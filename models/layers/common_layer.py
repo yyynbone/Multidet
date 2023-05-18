@@ -147,7 +147,6 @@ class Expand(nn.Module):
         x = x.permute(0, 3, 4, 1, 5, 2).contiguous()  # x(1,16,80,2,80,2)
         return x.view(b, c // s ** 2, h * s, w * s)  # x(1,16,160,160)
 
-
 class Concat(nn.Module):
     # Concatenate a list of tensors along dimension
     def __init__(self, dimension=1):
@@ -155,6 +154,24 @@ class Concat(nn.Module):
         self.d = dimension
 
     def forward(self, x):
+        return torch.cat(x, self.d)
+
+
+class Upsample_Concat(nn.Module):
+    # Concatenate a list of tensors along dimension
+    def __init__(self, dimension=1, upsample_mode='nearest'):
+        super().__init__()
+        self.d = dimension
+        self.mode = upsample_mode
+
+    def forward(self, x):
+        _,  c, h, w = x[1].shape
+        bs, u_c, u_h, u_w = x[0].shape
+        c_d = math.sqrt(u_c / c)
+        r_h, r_w = int(c_d*u_h), int(c_d*u_w)
+        x[0] = x[0].flatten()[:bs*c*r_h*r_w].reshape(bs, c, r_h, r_w)
+        m = nn.Upsample((h,w), None, self.mode)
+        x[0] = m(x[0])
         return torch.cat(x, self.d)
 
 

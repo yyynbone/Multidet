@@ -1,0 +1,16 @@
+task: val
+weights:
+- results/train/merge/zjdet_neck/exp/weights/best.pt  #this means list
+data: data/merge.yaml
+data_prefile: data_preprocess.yaml
+batch_size: 128
+bgr: 0
+last_conf: [0.1]
+verbose: True
+
+visual_matched: True
+imgsz: [832, 832]
+loss_num: 3
+div_area:
+- 25
+- 50

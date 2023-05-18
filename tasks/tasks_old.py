@@ -21,7 +21,7 @@ import torch.distributed as dist
 
 from loss import *
 from models  import (attempt_load, Model)
-from dataloader import check_anchors, check_train_batch_size, InfiniteDataLoader, LoadImagesAndLabels, get_dataset
+from dataloader import check_anchors, check_train_batch_size, InfiniteDataLoader, LoadImagesAndLabels
 from utils.lr_schedule import *
 from utils import ( check_dataset, check_img_size, check_suffix, colorstr, time_sync, init_seeds,
                     labels_to_class_weights, labels_to_image_weights, strip_optimizer, cal_flops, intersect_dicts,
@@ -65,8 +65,6 @@ def before_train(hyp, opt, logger):
 
     nc = 1 if single_cls else int(data_dict['nc'])  # number of classes
     names = ['item'] if single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
-    if not hyp.get('use_BCE', True):
-        nc += 1
     hyp['nc'] = nc
     hyp['names'] = names
     # assert len(names) == nc, f'{len(names)} names found for nc={nc} dataset in {data}'  # check
@@ -76,12 +74,7 @@ def before_train(hyp, opt, logger):
         ch_in = 3
     else:
         ch_in = 1
-    if resume:
-        ckpt = torch.load(weights, map_location='cpu')  # load checkpoint
-        model = ckpt.get('ema', ckpt['model']).float()
-        opt.cfg = ''
-    else:
-        model = Model(cfg, ch=ch_in, nc=nc, anchors=hyp.get('anchors'), logger=logger) # create
+    model = Model(cfg, ch=ch_in, nc=nc, anchors=hyp.get('anchors'), logger=logger) # create
     # Image size
     gs = int(model.stride.max()) if hasattr(model, 'stride') else 32
     gs = max(gs, 32)  # grid size (max stride)
@@ -92,43 +85,80 @@ def before_train(hyp, opt, logger):
     elif len(imgsz) == 1:
         imgsz = (imgsz[0], imgsz[0])
     imgsz = check_img_size(imgsz, gs, floor=gs * 2, logger=logger)  # verify imgsz is gs-multiple
-    fs = cal_flops(de_parallel(model), imgsz)
 
     opt.imgsz = imgsz
     opt.gs = gs
-    opt.hyp = hyp
     # Batch size
     if batch_size == -1:  # single-GPU only, estimate best batch size
         batch_size = check_train_batch_size(model, imgsz)
 
 
-    # Train
-    train_dataset, train_pre = get_dataset(train_path,
-                                    train_pre,
-                                    img_size=imgsz,
-                                    batch_size=batch_size,
-                                    logger=logger,
-                                    single_cls=single_cls,
-                                    bgr=opt.bgr,
-                                    stride=gs,
-                                    pad=.0,
-                                    prefix=colorstr('train: '),
-                                    filter_str=opt.filter_str,
-                                    filter_bkg=opt.ignore_bkg,
-                                    select_class=select_class_tuple(data_dict))
+    # Trainloader
+    train_dataset = LoadImagesAndLabels(train_path,
+                                        train_pre,
+                                        img_size=imgsz,
+                                        batch_size=batch_size,
+                                        logger=logger,
+                                        single_cls=single_cls,
+                                        hyp=hyp,  # hyperparameters
+                                        augment=True,
+                                        rect=opt.rect,
+                                        bgr=opt.bgr,
+                                        stride=gs,
+                                        pad=.0,
+                                        prefix=colorstr('train: '),
+                                        filter_str=opt.filter_str,
+                                        filter_bkg=opt.ignore_bkg,
+                                        select_class=select_class_tuple(data_dict))
 
     mlc = 0  # int(np.concatenate(train_dataset.labels, 0)[:, 0].max())  # max label class
     assert mlc < nc, f'Label class {mlc} exceeds nc={nc} in {data}. Possible class labels are 0-{nc - 1}'
+    # calculate class_weight
+    class_weights = labels_to_class_weights(train_dataset.labels, nc)
+    hyp['cls_weight'] = class_weights
+    opt.hyp = hyp
+    if opt.rect:
+        logger.warning('WARNING: --rect is incompatible with DataLoader shuffle, setting shuffle=False')
+        shuffle = False
+    else:
+        shuffle = True
+    sampler = None if opt.world_size == 1 else distributed.DistributedSampler(train_dataset, shuffle=shuffle)
+    loader = DataLoader  # if opt.image_weights else InfiniteDataLoader  # only DataLoader allows for attribute updates
+    train_loader = loader(train_dataset,
+                          batch_size=batch_size,
+                          shuffle=shuffle and sampler is None,
+                          num_workers=workers,
+                          sampler=sampler,
+                          pin_memory=True,
+                          collate_fn=LoadImagesAndLabels.collate_fn)
 
+    # if opt.image_weights:
+    #     iw = labels_to_image_weights(train_dataset.labels, nc=nc, class_weights=class_weights / nc)  # image weights
+    #     # eg:pic num is 10 , class_weights is (0.2,0.3,1,1,1,1,...)(because real class_num=2 (but to 80)
+    #     # dataset.indices before is (0,1,2,...9)
+    #     # but now is (2,3,2,3 ,4,2,0,0,3,2) like this, so some pic is not trained
+    #     # dataset.indices = random.choices(range(dataset.n), weights=iw, k=dataset.n)\
+    #     # so modified to this:
+    #     add_indices = random.choices(range(train_dataset.n), weights=iw, k=train_dataset.n)  # rand weighted idx
+    #     train_dataset.indices = np.concatenate((train_dataset.indices, add_indices))
+    print_log('train dataset loader done', logger)
     batch_size = min(batch_size, len(train_dataset))
+    # Process 0
+    if not resume:
+        # Anchors
+        if not opt.noautoanchor:
+            check_anchors(train_dataset, model=model, thr=hyp['anchor_t'], logger=logger)
 
-    # Val
-    val_dataset, val_pre = get_dataset(val_path,
+    # Valloader
+    val_dataset = LoadImagesAndLabels(val_path,
                                       val_pre,
                                       img_size=imgsz,
                                       batch_size=batch_size,
                                       logger=logger,
                                       single_cls=single_cls,
+                                      hyp=hyp,  # hyperparameters
+                                      augment=False,
+                                      rect=opt.rect,
                                       bgr=opt.bgr,
                                       stride=gs,
                                       pad=.0,
@@ -136,23 +166,31 @@ def before_train(hyp, opt, logger):
                                       filter_str=opt.filter_str,
                                       filter_bkg=opt.ignore_bkg,
                                       select_class=select_class_tuple(data_dict))
+    val_loader = DataLoader(val_dataset,
+                            batch_size=batch_size,
+                            shuffle=False,
+                            num_workers=workers,
+                            sampler=None,
+                            pin_memory=True,
+                            collate_fn=LoadImagesAndLabels.collate_fn)
 
-
+    fs = cal_flops(de_parallel(model), imgsz)
 
     print_log(f'Image sizes {imgsz} train, {imgsz} val\n'
               f'now with size of {imgsz}, {fs:.2f} GFLOPS\n'
               f'Each epoch batch_size is {batch_size},iter is {len(train_dataset) / batch_size}\n'
+              f"Epoch train image shape is {train_dataset.format(train_dataset.results[0])[0].shape}, should input as (ch, y, x)"
               f"Logging results to {colorstr('bold', save_dir)}\n", logger)
 
-    return  opt, train_dataset, train_pre, val_dataset, val_pre
+    return train_loader, val_loader
 
 
-def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_rank=-1, node=-1, world_size=1):
+def train(opt, logger, device, train_loader, val_loader, local_rank=-1, node=-1, world_size=1):
 
     save_dir, evolve, data, hyp, weights, cfg, resume, noval, nosave, workers, freeze = Path(opt.save_dir), opt.evolve,\
             opt.data, opt.hyp, opt.weights, opt.cfg, opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze
 
-    epochs, batch_size, single_cls, imgsz, gs, data_dict = opt.epochs, opt.batch_size, opt.single_cls, \
+    epochs, batch_size, single_cls, imgsz, gs, data_dict= opt.epochs, opt.batch_size, opt.single_cls, \
                                                   opt.imgsz, opt.gs, opt.data_dict
 
     # Directories
@@ -209,66 +247,6 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
 
     else:
         model = Model(cfg, ch=ch_in, nc=nc, anchors=hyp.get('anchors'), logger=logger).to(device)  # create
-
-    # calculate class_weight
-    train_dataset = LoadImagesAndLabels(train_pre,
-                                        train_data,
-                                        logger=logger,
-                                        bkg_ratio=getattr(opt, "bkg_ratio", 0),
-                                        obj_mask=getattr(opt, "train_obj_mask", 0)
-                                        )
-    class_weights = labels_to_class_weights(train_dataset.labels, nc)
-    hyp['cls_weight'] = class_weights
-    opt.hyp = hyp
-    if opt.rect:
-        logger.warning('WARNING: --rect is incompatible with DataLoader shuffle, setting shuffle=False')
-        shuffle = False
-    else:
-        shuffle = True
-    sampler = None if opt.world_size == 1 else distributed.DistributedSampler(train_dataset, shuffle=shuffle)
-    loader = DataLoader  # if opt.image_weights else InfiniteDataLoader  # only DataLoader allows for attribute updates
-    train_loader = loader(train_dataset,
-                          batch_size=batch_size,
-                          shuffle=shuffle and sampler is None,
-                          num_workers=workers,
-                          sampler=sampler,
-                          pin_memory=True,
-                          collate_fn=LoadImagesAndLabels.collate_fn)
-
-    # if opt.image_weights:
-    #     iw = labels_to_image_weights(train_dataset.labels, nc=nc, class_weights=class_weights / nc)  # image weights
-    #     # eg:pic num is 10 , class_weights is (0.2,0.3,1,1,1,1,...)(because real class_num=2 (but to 80)
-    #     # dataset.indices before is (0,1,2,...9)
-    #     # but now is (2,3,2,3 ,4,2,0,0,3,2) like this, so some pic is not trained
-    #     # dataset.indices = random.choices(range(dataset.n), weights=iw, k=dataset.n)\
-    #     # so modified to this:
-    #     add_indices = random.choices(range(train_dataset.n), weights=iw, k=train_dataset.n)  # rand weighted idx
-    #     train_dataset.indices = np.concatenate((train_dataset.indices, add_indices))
-    print_log('train dataset loader done', logger)
-    batch_size = min(batch_size, len(train_dataset))
-    # Process 0
-    if not resume and local_rank in [-1, 0]:
-        # Anchors
-        if not opt.noautoanchor:
-            check_anchors(train_dataset, model=model, thr=hyp['anchor_t'], logger=logger)
-
-    # Valloader
-    val_dataset = LoadImagesAndLabels(val_pre,
-                                      val_data,
-                                      logger=logger,
-                                      bkg_ratio=0,
-                                      obj_mask=getattr(opt, "val_obj_mask", 0)
-                                      )
-    val_loader = DataLoader(val_dataset,
-                            batch_size=batch_size,
-                            shuffle=False,
-                            num_workers=workers,
-                            sampler=None,
-                            pin_memory=True,
-                            collate_fn=LoadImagesAndLabels.collate_fn)
-
-    print_log(f"Epoch train image shape is {train_dataset[0][0].shape}, should input as (ch, y, x)", logger)
-
     # Freeze
     task_dict = {1: 'encoder', 2: 'neck', 3: 'head'}
     freeze = list(range(freeze))
@@ -453,7 +431,7 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
                 train_loader.dataset.indices = random.choices(range(len(train_loader.dataset)), weights=iw,
                                                        k=len(train_loader.dataset))  # rand weighted idx
             else:
-                train_loader.dataset.index_shuffle()
+                random.shuffle(train_loader.dataset.indices)
             # Update mosaic border (optional)
             # b = int(random.uniform(0.25 * imgsz, 0.75 * imgsz + gs) // gs * gs)
             # dataset.mosaic_border = [b - imgsz, -b]  # height, width borders
@@ -702,7 +680,7 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
                             torch.save(ckpt, best)
                             print_log(f'best epoch saved in Epoch {epoch}', logger)
 
-                        if recall_fi > 0.93 and precision_fi > 0.9:
+                        if recall_fi > 0.9 and precision_fi > 0.58:
                             torch.save(ckpt, w / f'epoch{epoch}.pt')
                             print_log(f'a better recall epoch saved in Epoch {epoch}', logger)
                         if recall_fi > 0.8:
@@ -860,7 +838,7 @@ def val(data,
     div_class_num = 1
     if isinstance(div_area, (list, tuple)):
         div_class_num += len(div_area) + 1
-    dataloader.dataset.index_shuffle()
+
     pbar = tqdm(dataloader, desc='validate detection', bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}')  # progress bar
 
     for batch_i, (im, targets, paths) in enumerate(pbar):

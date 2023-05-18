@@ -1,0 +1,22 @@
+weights:  results/train/merge_scls/zjdet_cat_filter_detect/exp/weights/best_precision.pt
+cfg: zjdet_cat_filter_detect.yaml
+freeze: 9
+data: merge_scls.yaml
+data_prefile: data_preprocess.yaml
+hyp: hyp.yaml
+batch_size: 256
+bgr: 0
+last_conf: 0.6
+verbose: True
+visual_matched: True
+imgsz:
+- 640
+div_area:
+- 25
+- 50
+epochs: 1000
+rect: false
+world_size: 8
+loss: LossV5
+loss_supervision: 50
+patience: 800
