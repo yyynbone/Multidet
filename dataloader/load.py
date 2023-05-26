@@ -9,6 +9,7 @@ from copy import deepcopy
 from concurrent import futures
 import numpy as np
 from tqdm import tqdm
+import xml.etree.ElementTree as ET
 
 from utils import  segments2boxes, print_log, xyxy2xywh, xywh2xyxy, xyn2xy, clip_label, mkdir
 from dataloader.utils import bbox_overlaps
@@ -96,9 +97,13 @@ def img2seg_labels(img_paths, mask_suffix='.png'):
 def img2seg_label(img_path, mask_suffix='.png'):
     # Define label paths as a function of image paths
     sa, sb, sm = os.sep + 'images' + os.sep, os.sep + 'labels' + os.sep, os.sep + 'labels' + os.sep + 'masks' + os.sep
-    parent =  img_path.split('images')[0]
+    parent = img_path.split('images')[0]
     if os.path.exists(parent+sb):
         label_path = sb.join(img_path.rsplit(sa, 1)).rsplit('.', 1)[0] + '.txt'
+        if not os.path.exists(label_path):
+            label_path = sb.join(img_path.rsplit(sa, 1)).rsplit('.', 1)[0] + '.xml'
+        if not os.path.exists(label_path):
+            label_path = sb.join(img_path.rsplit(sa, 1)).rsplit('.', 1)[0] + '.json'
     else:
         label_path = None
     if os.path.exists(parent+sm):
@@ -179,9 +184,106 @@ def read_image(result):
         im = img2npy(img_f)  # BGR
         result['img'] = im # BGR
 
+def get_yolotxt(label_file, select_class):
+    l = []
+    with open(label_file) as f:
+        l = [x.split() for x in f.read().strip().splitlines() if len(x)]
+        # select category we wanted:
+        if len(select_class):
+            l = [x for x in l if int(x[0]) in select_class]
 
-def load_label(result, select_class=(), prefix='', logger=None, big_image=False):
-    img_f  = result['filename']
+        if any([len(x) > 8 for x in l]):  # is segment
+            classes = np.array([x[0] for x in l], dtype=np.float32)
+            segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in l]  # (cls, xy1...)
+            l = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
+    if len(l):
+        assert l.shape[1] == 5, f'labels require 5 columns, {l.shape[1]} columns detected'
+        assert (l >= 0).all(), f'negative label values {l[l < 0]}'
+
+        # select category we wanted and sequence it from 0:
+        # if l.ndim>1:
+        for i, sc in enumerate(select_class):
+            # l[l[..., 0]==sc][..., 0] == i # this is false, cant change l
+            l[l[..., 0] == sc, 0] = i
+
+        if (l[:, 1:] <= 1).all():
+            # xywh 2 xyxy
+            l[:, 1:] = xywh2xyxy(l[:, 1:], 832, 832)
+            # l[:, 1:] = xywh2xyxy(l[:, 1:], result['img_size'][1], result['img_size'][0])
+        else:
+            print(f'non-normalized or out of bounds coordinates {l[:, 1:][l[:, 1:] > 1]}')
+    return l, segments
+
+def get_xml(xmlfile, classes=None):
+    object_axis = []
+    xml_class = []
+    in_file = open(xmlfile, encoding='utf-8')
+    tree = ET.parse(in_file)
+    root = tree.getroot()
+    # for child1 in root:
+    #     for child2 in child1:
+    #         if child2.tag == 'width':
+    #             width = child2.text
+    for size in root.iter('size'):
+        width = float(size.find('width').text)
+        height = float(size.find('height').text)
+    for obj in root.iter('object'):
+        try:
+            difficult = obj.find('difficult').text
+        except:
+            difficult = obj.find('Difficult').text
+        cls = obj.find('name').text.lower()
+        if classes is not None:
+            if cls not in classes:
+                continue
+        else:
+            xml_class.append(cls)
+        # if int(difficult) == 1:
+        #     continue
+        xmlbox = obj.find('bndbox')
+        box_trans = True
+        box_unspec = False
+        pose = obj.find('pose')
+        if pose is not None:
+            pose = pose.text
+            if pose=='FourSpot':
+                box_trans = False
+            elif pose=='Unspecified':
+                box_unspec = True
+
+        if box_unspec:
+            #assert xmlbox.find('x0') is not None, f'in {xmlfile} box is not identified'
+            if xmlbox.find('x0') is not None:
+                b = [float(xmlbox.find('x0').text), float(xmlbox.find('y0').text),
+                     float(xmlbox.find('x1').text), float(xmlbox.find('y2').text),
+                     cls, int(difficult)]
+            elif xmlbox.find('xmin') is not None:
+                b = [float(xmlbox.find('xmin').text), float(xmlbox.find('ymin').text),
+                     float(xmlbox.find('xmax').text),float(xmlbox.find('ymax').text),
+                     cls, int(difficult)]
+            else:
+                assert xmlbox.find('x0') is not None, f'in {xmlfile} box is not identified'
+
+        elif box_trans:
+            b = [float(xmlbox.find('xmin').text), float(xmlbox.find('ymin').text), float(xmlbox.find('xmax').text),
+                 float(xmlbox.find('ymax').text), cls, int(difficult)]
+        else:
+            b = [float(xmlbox.find('xmin').text.split('-')[0]), float(xmlbox.find('ymin').text.split('-')[0]), float(xmlbox.find('xmax').text.split('-')[0]),
+                 float(xmlbox.find('ymax').text.split('-')[0]), cls, int(difficult)]
+        object_axis.append(b)
+    # return (object_axis,xml_class) if classes is None else object_axis, height, width
+
+    if classes is None:
+        classes = xml_class
+    class_id = np.array([classes.index(x[4]) for x in object_axis], dtype=np.float32)
+    segments = [np.array(x[:4], dtype=np.float32).reshape(-1, 2) for x in object_axis]  # (cls, xy1...)
+
+    l = np.concatenate((class_id.reshape(-1, 1), np.array(segments).reshape(-1, 4)), 1)  # (cls, xywh)
+
+    return l, segments
+
+def load_label(result, select_class=(), prefix='', logger=None):
+    img_f = result['filename']
     label_file, seg_file = img2seg_label(img_f)  # labels
     if seg_file is not None:
         result['segment'] = cv2.imread(seg_file)
@@ -191,42 +293,21 @@ def load_label(result, select_class=(), prefix='', logger=None, big_image=False)
     # verify labels
     segments = []
     if os.path.isfile(label_file):
-        if big_image:
-            print('big')
+        if '.json' in label_file:
+            print('json')
+        elif '.xml' in label_file:
+            l, segments = get_xml(label_file, select_class)
         else:
-            with open(label_file) as f:
-                l = [x.split() for x in f.read().strip().splitlines() if len(x)]
-                # select category we wanted:
-                if len(select_class):
-                    l = [x for x in l if int(x[0]) in select_class]
-
-                if any([len(x) > 8 for x in l]):  # is segment
-                    classes = np.array([x[0] for x in l], dtype=np.float32)
-                    segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in l]  # (cls, xy1...)
-                    l = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
-                l = np.array(l, dtype=np.float32)
+            l, segments = get_yolotxt(label_file, select_class)
+        l = np.array(l, dtype=np.float32)
         nl = len(l)
         if nl:
-            # select category we wanted and sequence it from 0:
-            # if l.ndim>1:
-            for i, sc in enumerate(select_class):
-                # l[l[..., 0]==sc][..., 0] == i # this is false, cant change l
-                l[l[..., 0] == sc, 0] = i
-            assert l.shape[1] == 5, f'labels require 5 columns, {l.shape[1]} columns detected'
-            assert (l >= 0).all(), f'negative label values {l[l < 0]}'
 
-
-            if (l[:, 1:] <= 1).all():
-                # xywh 2 xyxy
-                l[:, 1:] = xywh2xyxy(l[:, 1:], result['ori_shape'][1], result['ori_shape'][0])
-                # l[:, 1:] = xywh2xyxy(l[:, 1:], result['img_size'][1], result['img_size'][0])
-            else:
-                print_log(f'non-normalized or out of bounds coordinates {l[:, 1:][l[:, 1:] > 1]}', logger)
             _, i = np.unique(l, axis=0, return_index=True)
             if len(i) < nl:  # duplicate row check
                 l = l[i]  # remove duplicates
                 if segments:
-                    segments = segments[i]
+                    segments = [segments[id] for id in i]
                 print_log(f'{prefix}WARNING: {img_f}: {nl - len(i)} duplicate labels removed', logger)
 
         else:
@@ -243,7 +324,7 @@ def load_label(result, select_class=(), prefix='', logger=None, big_image=False)
 
     return result
 
-def load_labels(results, select_class=(), prefix='',filter_bkg=False, big_image=False, logger=None):
+def load_labels(results, select_class=(), prefix='',filter_bkg=False, logger=None):
     # n_rs = []
     # with Pool(NUM_THREADS) as pool:
     #     pbar = pool.imap(partial(load_label,select_class=select_class, prefix=prefix, logger=logger), results)
@@ -252,7 +333,7 @@ def load_labels(results, select_class=(), prefix='',filter_bkg=False, big_image=
     #         n_rs.append(result)
     # results = n_rs
     # # it cost more in pool start and queue, eg:100s for 5400 labels, and only 2s without pool
-    results = [load_label(result, select_class=select_class, prefix=prefix, big_image=big_image, logger=logger) for result in tqdm(results, total=len(results), bar_format='', desc='loading_labels')]
+    results = [load_label(result, select_class=select_class, prefix=prefix, logger=logger) for result in tqdm(results, total=len(results), bar_format='', desc='loading_labels')]
     if filter_bkg:
         results = [result for result in results if len(result['labels'])]
 
@@ -511,8 +592,12 @@ def crop2merge(img, crop_w, crop_h, bx1, by1,  labels=None, instance_segment=Non
                     select_idx = random.choice(range(len(labels)))
             c_x = min(labels_area[select_idx, 0], c_img_w - crop_w)
             c_y = min(labels_area[select_idx, 1], c_img_h - crop_h)
-            new_pic_x = max(0, int(c_x) - random.randint(0, c_img_w - crop_w))
-            new_pic_y = max(0, int(c_y) - random.randint(0, c_img_h - crop_h))
+            # new_pic_x = max(0, int(c_x) - random.randint(0, c_img_w - crop_w))
+            # new_pic_y = max(0, int(c_y) - random.randint(0, c_img_h - crop_h))
+            # new_pic_x = max(0, int(c_x) - random.randint(0, crop_w))
+            # new_pic_y = max(0, int(c_y) - random.randint(0, crop_h))
+            new_pic_x = max(0, int(c_x) - random.randint(pix_thres, crop_w-pix_thres))
+            new_pic_y = max(0, int(c_y) - random.randint(pix_thres, crop_h-pix_thres))
 
         if instance_segment is not None:
             instance_segment = [xyn2xy(x, 1, 1, bx1 - new_pic_x, by1 - new_pic_y) for x in instance_segment]
@@ -591,7 +676,8 @@ def load_mosaic(results, indice=None, more_add=6):
         bx1 = w_i * crop_w
         c_axis, labels, instance_segment = crop2merge(img, crop_w, crop_h, bx1, by1, labels=labels, instance_segment=instance_segment)
         labels_all.append(labels)
-        segments_all.extend(instance_segment)
+        if instance_segment is not None:
+            segments_all.extend(instance_segment)
 
         img_add[by1:by1 + crop_h, bx1:bx1 + crop_w] = img[c_axis[1]:c_axis[3], c_axis[0]:c_axis[2]]
         if seg_add is not None:
@@ -614,36 +700,62 @@ def load_mosaic(results, indice=None, more_add=6):
     new_result['instance_segments'] = segments_all if segments_all else None
     return  new_result
 
-def load_big2_small(big_result, cropped_imgsz, pic_repeat=3, iou_thres=0.4, pix_thres=20):
+def load_big2_small(big_result, cropped_imgsz, obj_repeat=2, bg_repeat=2, iou_thres=0.4, pix_thres=8, save_crop=False):
     crop_w, crop_h = cropped_imgsz
     small_results = []
     result = deepcopy(big_result)
     read_image(result)
-    img =  result['img']
+    img = result['img']
     instance_segment = result['instance_segments']
     labels = result['labels']
     file_stem, file_suffix = result['filename'].split(".")
     if instance_segment is not None:
         assert len(labels) == len(instance_segment), "origin labels and segment is not equal"
-    for _ in range(pic_repeat):
+    for _ in range(obj_repeat):
         for idx in range(len(labels)):
             c_axis, obj_labels, obj_instance_seg = crop2merge(img, crop_w, crop_h, 0, 0,  labels=labels,
                                                               instance_segment=instance_segment, iou_thres=iou_thres,
                                                               pix_thres=pix_thres, crop_obj=True, max_obj_center=False,
                                                               select_idx=idx)
             obj_f = file_stem + f'_{c_axis[0]}_{c_axis[2]}_{c_axis[1]}_{c_axis[3]}.{file_suffix}'
-            obj_img = img[c_axis[1]:c_axis[3], c_axis[0]:c_axis[3]]
-            obj_result = {'file_name':obj_f, 'axis': c_axis, 'ori_shape':(crop_h, crop_w), 'segment': None,
+            obj_img = img[c_axis[1]:c_axis[3], c_axis[0]:c_axis[2]]
+
+            if save_crop:
+                if len(obj_labels):
+                    save_dir_name = 'obj'
+                else:
+                    save_dir_name = 'bg'
+                save_name = obj_f.replace('origin', save_dir_name)
+                mkdir(save_name)
+                cv2.imwrite(save_name, obj_img)
+                label_name = save_name.replace('images', 'labels').replace(file_suffix, 'txt')
+                mkdir(label_name)
+                np.savetxt(label_name, obj_labels)
+            obj_result = {'filename':obj_f, 'axis': c_axis, 'ori_shape':(crop_h, crop_w), 'img_size':result['img_size'], 'segment': None,
                           'labels': obj_labels, 'instance_segments': obj_instance_seg, 'img': obj_img }
             small_results.append(obj_result)
 
-            bg_axis, bg_labels, bg_instance_seg = crop2merge(img, crop_w, crop_h, 0, 0,  labels=labels,
-                                                              instance_segment=instance_segment, iou_thres=iou_thres,
-                                                              pix_thres=pix_thres, crop_obj=False, max_obj_center=False,
-                                                              select_idx=None)
-            bg_f = file_stem + f'_{bg_axis[0]}_{bg_axis[2]}_{bg_axis[1]}_{bg_axis[3]}.{file_suffix}'
-            bg_img = img[bg_axis[1]:bg_axis[3], bg_axis[0]:bg_axis[3]]
-            bg_result = {'file_name':bg_f, 'axis': bg_axis, 'ori_shape':(crop_h, crop_w), 'segment': None,
-                          'labels': bg_labels, 'instance_segments': bg_instance_seg, 'img': bg_img }
-            small_results.append(bg_result)
+    for _ in range(bg_repeat*len(labels)):
+        bg_axis, bg_labels, bg_instance_seg = crop2merge(img, crop_w, crop_h, 0, 0,  labels=labels,
+                                                          instance_segment=instance_segment, iou_thres=iou_thres,
+                                                          pix_thres=pix_thres, crop_obj=False, max_obj_center=False,
+                                                          select_idx=None)
+        bg_f = file_stem + f'_{bg_axis[0]}_{bg_axis[2]}_{bg_axis[1]}_{bg_axis[3]}.{file_suffix}'
+        bg_img = img[bg_axis[1]:bg_axis[3], bg_axis[0]:bg_axis[2]]
+
+        if save_crop:
+            if len(bg_labels):
+                save_dir_name = 'obj'
+            else:
+                save_dir_name = 'bg'
+            save_name = bg_f.replace('origin', save_dir_name)
+            mkdir(save_name)
+            cv2.imwrite(save_name, bg_img)
+            label_name = save_name.replace('images', 'labels').replace(file_suffix, 'txt')
+            mkdir(label_name)
+            np.savetxt(label_name, bg_labels)
+
+        bg_result = {'filename':bg_f, 'axis': bg_axis, 'ori_shape':(crop_h, crop_w), 'img_size':result['img_size'], 'segment': None,
+                      'labels': bg_labels, 'instance_segments': bg_instance_seg, 'img': bg_img }
+        small_results.append(bg_result)
     return  small_results

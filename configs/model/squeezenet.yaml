@@ -1,21 +1,23 @@
 #                 from  n    params  module                                  arguments
-#  0                -1      1792  torch.nn.modules.conv.Conv2d            [3, 64, 3, 2]
+#  0                -1       640  torch.nn.modules.conv.Conv2d            [1, 64, 3, 2, 1]
 #  1                -1         0  torch.nn.modules.activation.ReLU        [True]
 #  2                -1     24416  models.layers.squeezenet.FireM          [64, 16, 64, 64]
 #  3                -1     95936  models.layers.squeezenet.FireM          [128, 32, 128, 128]
 #  4                -1    217632  models.layers.squeezenet.FireM          [256, 48, 192, 192]
 #  5                -1    388480  models.layers.squeezenet.FireM          [384, 64, 256, 256]
-#  6                -1    263682  models.head.SqueezenetClassify          [512, 2]
+#  6                -1    263169  models.head.SqueezenetClassify          [512, 1]
 
-#Model Summary: 127layers, 991938 parameters, 991938 gradients,image size is 640, 3.7 GFLOPs in cpu
+#Model Summary: 127layers, 990273 parameters, 990273 gradients,image size is (640, 640), 3.8 GFLOPs in cpu
 # time (ms)     GFLOPs     params                                    module                       input_size
-#      1.00     2.8135       1792  torch.nn.modules.conv.Conv2d              torch.Size([8, 3, 640, 640])
-#      0.50     0.0000          0  torch.nn.modules.activation.ReLU          torch.Size([8, 64, 319, 319])
-#      9.50     9.9927      24416  models.layers.squeezenet.FireM            torch.Size([8, 64, 319, 319])
-#      2.70     9.6373      95936  models.layers.squeezenet.FireM            torch.Size([8, 128, 159, 159])
-#      1.40     5.3173     217632  models.layers.squeezenet.FireM            torch.Size([8, 256, 79, 79])
-#      1.20     2.2505     388480  models.layers.squeezenet.FireM            torch.Size([8, 384, 39, 39])
-#      0.40     1.5171     263682  models.head.SqueezenetClassify            torch.Size([8, 512, 19, 19])
+#      1.12     0.0125        640  torch.nn.modules.conv.Conv2d              torch.Size([1, 1, 208, 208])
+#      0.07     0.0000          0  torch.nn.modules.activation.ReLU          torch.Size([1, 64, 104, 104])
+#      3.43     0.1336      24416  models.layers.squeezenet.FireM            torch.Size([1, 64, 104, 104])
+#      1.86     0.1305      95936  models.layers.squeezenet.FireM            torch.Size([1, 128, 52, 52])
+#      1.71     0.0739     217632  models.layers.squeezenet.FireM            torch.Size([1, 256, 26, 26])
+#      1.07     0.0281     388480  models.layers.squeezenet.FireM            torch.Size([1, 384, 13, 13])
+#      0.50     0.0189     263169  models.head.SqueezenetClassify            torch.Size([1, 512, 6, 6])
+#      9.75     0.3974     990273  Total use cpu
+#      9.75     0.3974     990273  Per image use cpu
 # Parameters
 depth_multiple: 1.  # model depth multiple
 width_multiple: 1.  # layer channel multiple
@@ -23,7 +25,7 @@ depth_layer: []
 width_layer: [nn.Conv2d, FireM]
 nc: 80
 backbone:
-  [[-1, nn.Conv2d, [64, 3, 2]],  #
+  [[-1, nn.Conv2d, [64, 3, 2, 1]],  #
    [-1, nn.ReLU, [True]],  #
    [-1, FireM, [64, 16, 64, 64]],
    [-1, FireM, [128, 32, 128, 128]],

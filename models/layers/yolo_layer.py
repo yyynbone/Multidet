@@ -46,7 +46,7 @@ class C3(nn.Module):
 
 class C3SPP(C3):
     # C3 module with SPP()
-    def __init__(self, c1, c2, k=(5, 9, 13), n=1, shortcut=True, g=1, e=0.5):
+    def __init__(self, c1, c2, n=1, k=(5, 9, 13), shortcut=True, g=1, e=0.5):
         super().__init__(c1, c2, n, shortcut, g, e)
         c_ = int(c2 * e)
         self.m = SPP(c_, c_, k)

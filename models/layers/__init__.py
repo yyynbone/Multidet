@@ -6,3 +6,4 @@ from models.layers.shuffle_layer import *
 from models.layers.transformer_layer import *
 from models.layers.yolo_layer import *
 from models.layers.squeezenet import *
+from models.layers.resnet_layer import *

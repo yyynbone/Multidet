@@ -19,7 +19,7 @@ except ImportError:
     thop = False
 
 det_head = (Detect, YOLOv8Detect, IDetect)
-cls_head = (Classify, YOLOv8Classify, SqueezenetClassify, ObjClassify)
+cls_head = (Classify, YOLOv8Classify, SqueezenetClassify, ObjClassify, Flatten)
 def parse_model(d, ch_in, logger=LOGGER):  # model_dict, input_channels(3)
     print_log(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}", logger)
     anchors, nc, gd, gw = d.get('anchors', []), d['nc'], d['depth_multiple'], d['width_multiple']
@@ -399,8 +399,8 @@ if __name__ == '__main__':
     FILE = Path(__file__).resolve()
     ROOT = FILE.parents[1]
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/squeezenet_sppf_fpn.yaml', help='model.yaml')
-    parser.add_argument('--device', default='cpu', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/resnet34.yaml', help='model.yaml')
+    parser.add_argument('--device', default='0', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--profile', default=True, help='profile model speed')
     parser.add_argument('--test', action='store_true', help='test all yolo*.yaml')
     opt = parser.parse_args()
@@ -409,6 +409,7 @@ if __name__ == '__main__':
     print_args(FILE.stem, opt)
     device = select_device(opt.device)
     ch_in = 1
+    input_shape = (ch_in, 208, 208)
     # Create model
     if check_yaml(opt.cfg):
         model = Model(opt.cfg, ch=ch_in, nc=1, imgsz=(640, 640)).to(device)
@@ -417,10 +418,11 @@ if __name__ == '__main__':
         weight = ROOT/ 'checkpoints/squeezenet.pt'
         model = attempt_load(weight, map_location=device, ch=ch_in, nc=1)
 
+
     # Profile
     if opt.profile:
         # img = torch.rand(32 if torch.cuda.is_available() else 1, ch_in, 320, 320).to(device)
-        img = torch.rand(1, ch_in, 208, 208).to(device)
+        img = torch.rand(1, *(input_shape)).to(device)
         y = model(img, profile=True)
 
     # Test all models
@@ -436,3 +438,12 @@ if __name__ == '__main__':
     # tb_writer = SummaryWriter('.')
     # LOGGER.info("Run 'tensorboard --logdir=models' to view tensorboard at http://localhost:6006/")
     # tb_writer.add_graph(torch.jit.trace(model, img, strict=False), [])  # add model graph
+    from utils import get_model_complexity_info
+
+    flops, params = get_model_complexity_info(model, input_shape)
+    split_line = '=' * 30
+    print(f'{split_line}\nInput shape: {input_shape}\n'
+          f'Flops: {flops}\nParams: {params}\n{split_line}')   # GMac , 1 GMac = 2GFLOPs
+    print('!!!Please be cautious if you use the results in papers. '
+          'You may need to check if all ops are supported and verify that the '
+          'flops computation is correct.')

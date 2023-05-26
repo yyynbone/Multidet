@@ -1,12 +1,14 @@
 import torch
 import numpy as np
 import math
+import json
+import os
 from pathlib import Path
 from utils.label_process import xyxy2xywh, xywh2xyxy
 import time
 import torchvision
 from utils.plots import plot_pr_curve, plot_confusionmatrics, print_log
-
+from utils.cal_coco import select_score_from_json, visual_return
 def bbox_iou(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False, eps=1e-7):
     # Returns the IoU of box1 to box2. box1 is 4, box2 is nx4
     box2 = box2.T
@@ -122,7 +124,6 @@ def box_iof(box1, box2):
     # Intersection over the smaller area
     return inter / torch.min(area1[:, None], area2[None])
 
-
 # def div_area_idx(area, div_area, area_idx):
 #     """
 #     divide the area by pix_node and return area_idx
@@ -190,6 +191,16 @@ def box_iof(box1, box2):
 #
 #     return correct, area_idx
 
+# def area_filter(array, e_class=4, filter_idx=1):
+#     assert array.shape[0]%e_class==0, 'must be divided by e_class'
+#     idx = []
+#     for i in range(array.shape[0]):
+#         if i%e_class !=filter_idx :
+#             idx.append(i)
+#     return array[idx]
+
+def area_filter(array, filter_from=2):
+    return array[:, filter_from:]
 
 def div_area_idx(area, div_area, area_idx):
     """
@@ -613,3 +624,95 @@ def classify_match(pred_out, class_label, conf_ts=0.5, logger=None):
             print_log(pf % (cls, obj_num, pred_num, match_num, p, r), logger)
         # logger_func(f"there are bg number {bg_num},  object number {obj_num}, pred object is {pred_num}, obj_matched {obj_match_num},  so P/{p:.3f} R/{r:.3f}")
     return ps, rs, accus
+
+def det_coco_calculate(weights, data, task, save_dir, logger, jdict, last_conf, dataloader, visual_matched):
+    is_coco = isinstance(data.get('val'), str) and data['val'].endswith('val.json')  # COCO dataset
+    w = Path(weights[0] if isinstance(weights, list) else weights).stem if weights is not None else ''  # weights
+    # anno_json = str(Path(data.get('path', '../coco')) / 'annotations/instances_val2017.json')  # annotations json
+    anno_json = str(Path(data.get('path', '../coco')) / f'COCO/annotation/{task}.json')  # annotations json
+    pred_json = str(save_dir / f"{w}_predictions.json")  # predictions json
+    print_log(f'\nEvaluating pycocotools mAP... saving {pred_json}...', logger)
+
+    ######### for Imageid  of filename 2 Imageid ################
+    with open(anno_json, 'r') as f:
+        images = json.load(f)['images']
+    image_file_id = {}
+    for img_info in images:
+        file_name_no_suffix = img_info['file_name'].split('.')[0]
+        image_file_id[file_name_no_suffix] = img_info['id']
+    for pic_info in jdict:
+        pic_info['image_id'] = image_file_id[pic_info['image_name']]
+
+    with open(pred_json, 'w') as f:
+        json.dump(jdict, f, indent=4)
+
+    try:  # https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocoEvalDemo.ipynb
+        from pycocotools.coco import COCO
+        from pycocotools.cocoeval import COCOeval
+
+        anno = COCO(anno_json)  # init annotations api
+        for conf_t in last_conf:
+            pred_json_c = select_score_from_json(pred_json, score_thresh=conf_t)
+
+            pred = anno.loadRes(pred_json_c)  # init predictions api
+            eval = COCOeval(anno, pred, 'bbox')
+            if is_coco:
+                eval.params.imgIds = [int(Path(x).stem) for x in dataloader.dataset.img_files]  # image IDs to evaluate
+            eval.evaluate()
+            eval.accumulate()
+            eval.summarize()
+            map, map50 = eval.stats[:2]  # update results (mAP@0.5:0.95, mAP@0.5)
+
+            if visual_matched:
+                with open(data[task], 'r') as f:
+                    img0 = f.readline()
+                img_prefix = os.path.split(img0)[0]
+                print_log(
+                    f"##########################\nnow we collect and visual result with iou thresh of "
+                    f"0.5 and conf thresh of {conf_t}", logger=logger)
+
+                visual_return(eval, anno, save_dir, img_prefix, class_area=None, score_thresh=conf_t,
+                              logger=logger)
+
+    except Exception as e:
+        print_log(f'pycocotools unable to run: {e}', logger)
+def det_calculate(stats, div_area, nc, last_conf, save_dir, names, plots,verbose, logger):
+    s = ('%20s' + '%11s' * 7) % ('Class', 'Labels', 'R_num', 'P_num', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
+    p, r, mp, mr, map50, map =  0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+    ps, rs, pred_truths, lev_nps, ap, ap_class, nt = calcu_per_class(*stats, plot=plots, save_dir=save_dir, names=names,
+                                                                     conf_ts=last_conf)
+    ap50, ap = ap[..., 0], ap.mean(2)  # AP@0.5, AP@0. 5:0.95
+    for li, conf_t in enumerate(last_conf):
+        p, r, pred_truth, lev_np = ps[li], rs[li], pred_truths[li], lev_nps[li]
+        # Print results
+        print_log(s, logger)
+        pf = '%20s' + '%11i' * 3 + '%11.3g' * 4  # print format
+        all_tp, all_p, all_t = pred_truth[:, 0].sum(), lev_np[:, 0].sum(), nt[:, 0].sum()
+
+        mp, mr = all_tp / max(all_p, 1e-16), all_tp / max(all_t, 1e-16)
+        map50, map = ap50[:, 0].mean(), ap[:, 0].mean()
+        print_log(pf % (f'all_conf_{conf_t}', all_t, all_tp, all_p, mp, mr, map50, map), logger)
+        if div_area is not None:
+            f_t, f_tp, f_p = area_filter(nt), area_filter(pred_truth), area_filter(lev_np)
+            f_map50, f_map = area_filter(ap50), area_filter(ap)
+            f_map50 = (f_map50 * f_p).sum() / max(f_p.sum(), 1e-16)
+            f_map = (f_map * f_p).sum() / max(f_p.sum(), 1e-16)
+            f_t, f_tp, f_p = f_t.sum(), f_tp.sum(), f_p.sum()
+            f_mp, f_mr = f_tp / max(f_p, 1e-16), f_tp / max(f_t, 1e-16)
+            print_log(pf % (f'all_over_{div_area[0]}', f_t, f_tp, f_p, f_mp, f_mr, f_map50, f_map), logger)
+
+        # Print results per class
+        if verbose and nc > 1 and len(stats):
+            for i, c in enumerate(ap_class):
+                if c in names:
+                    print_log(pf % (
+                    names[c], nt[i, 0], pred_truth[i, 0], lev_np[i, 0], p[i, 0], r[i, 0], ap50[i, 0], ap[i, 0]), logger)
+                    if isinstance(div_area, (list, tuple)):
+                        for div_i, div_ang in enumerate(div_area):
+                            print_log(pf % (f'{names[c]}_under_{div_ang}', nt[i, div_i + 1], pred_truth[i, div_i + 1],
+                                            lev_np[i, div_i + 1], p[i, div_i + 1], r[i, div_i + 1], ap50[i, div_i + 1],
+                                            ap[i, div_i + 1]), logger)
+                        print_log(pf % (
+                            f'{names[c]}_over_{div_ang}', nt[i, -1], pred_truth[i, -1], lev_np[i, -1],
+                            p[i, -1], r[i, -1], ap50[i, -1], ap[i, -1]), logger)
+    return mp, mr, map50, map, ap, ap_class, p, r

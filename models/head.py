@@ -355,7 +355,7 @@ class SqueezenetClassify(nn.Module):
         if isinstance(x, list):
             x = torch.cat(x, 1)
         x = self.linear(self.pool(self.classifier(x)).flatten(1))
-        return x if self.training else (x.sigmoid() if self.use_sigmoid else F.softmax(x, dim=1), x)
+        return x if self.training else (x.sigmoid() if self.use_sigmoid else F.softmax(x, dim=1)[:,1:], x)
         # return F.softmax(x, dim=1)
 
 class Proto(nn.Module):
@@ -416,3 +416,23 @@ class ObjClassify(nn.Module):
             # print(pred_out)
             return (pred_out, out)
         # return out if self.training else (out.sigmoid(), out)
+
+
+class Flatten(nn.Module):
+
+    def __init__(self, c1, c2):  # ch_in, ch_out, kernel, stride, padding, groups
+        super().__init__()
+        self.pool = nn.AdaptiveAvgPool2d(1)  # to x(b,c_,1,1)
+        self.linear = nn.Linear(c1, c2)  # to x(b,c2)
+        if c2==1:
+            self.use_sigmoid = True
+        else:
+            self.use_sigmoid = False
+
+    def forward(self, x):
+        if isinstance(x, list):
+            x = torch.cat(x, 1)
+        x = self.pool(x).flatten(1)
+        x = self.linear(x)
+        return x if self.training else (x.sigmoid() if self.use_sigmoid else F.softmax(x, dim=1), x)
+        # return F.softmax(x, dim=1)

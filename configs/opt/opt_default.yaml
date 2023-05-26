@@ -52,3 +52,7 @@ upload_dataset: false
 bbox_interval: -1
 artifact_alias: latest
 
+bkg_ratio: 1
+train_obj_mask: 1
+val_obj_mask: 0
+

@@ -1,21 +1,58 @@
 #                 from  n    params  module                                  arguments
-#  0                -1      1792  torch.nn.modules.conv.Conv2d            [3, 64, 3, 2]
+#  0                -1       160  torch.nn.modules.conv.Conv2d            [1, 16, 3, 2, 1]
 #  1                -1         0  torch.nn.modules.activation.ReLU        [True]
-#  2                -1     24416  models.layers.squeezenet.FireM          [64, 16, 64, 64]
-#  3                -1     95936  models.layers.squeezenet.FireM          [128, 32, 128, 128]
-#  4                -1    217632  models.layers.squeezenet.FireM          [256, 48, 192, 192]
-#  5                -1    388480  models.layers.squeezenet.FireM          [384, 64, 256, 256]
-#  6                -1    263682  models.head.SqueezenetClassify          [512, 2]
-
-#Model Summary: 127layers, 991938 parameters, 991938 gradients,image size is 640, 3.7 GFLOPs in cpu
+#  2                -1      9280  torch.nn.modules.conv.Conv2d            [16, 64, 3, 1, 2]
+#  3                -1         0  torch.nn.modules.activation.ReLU        [True]
+#  4                -1     24416  models.layers.squeezenet.FireM          [64, 16, 64, 64, 0]
+#  5                -1     95936  models.layers.squeezenet.FireM          [128, 32, 128, 128, 0]
+#  6                -1    217632  models.layers.squeezenet.FireM          [256, 48, 192, 192, 0]
+#  7                -1    388480  models.layers.squeezenet.FireM          [384, 64, 256, 256, 0]
+#  8                -1    656896  models.layers.yolo_layer.SPPF           [512, 512, 5]
+#  9           [-1, 4]         0  models.layers.common_layer.Upsample_Concat[1, 'nearest']
+# 10                -1       257  models.head.Classify                    [256, 1]
+#Model Summary: 133layers, 1393057 parameters, 1393057 gradients,image size is (640, 640), 295.2 GFLOPs in cpu
 # time (ms)     GFLOPs     params                                    module                       input_size
-#      1.00     2.8135       1792  torch.nn.modules.conv.Conv2d              torch.Size([8, 3, 640, 640])
-#      0.50     0.0000          0  torch.nn.modules.activation.ReLU          torch.Size([8, 64, 319, 319])
-#      9.50     9.9927      24416  models.layers.squeezenet.FireM            torch.Size([8, 64, 319, 319])
-#      2.70     9.6373      95936  models.layers.squeezenet.FireM            torch.Size([8, 128, 159, 159])
-#      1.40     5.3173     217632  models.layers.squeezenet.FireM            torch.Size([8, 256, 79, 79])
-#      1.20     2.2505     388480  models.layers.squeezenet.FireM            torch.Size([8, 384, 39, 39])
-#      0.40     1.5171     263682  models.head.SqueezenetClassify            torch.Size([8, 512, 19, 19])
+#      0.08     0.0031        160  torch.nn.modules.conv.Conv2d              torch.Size([1, 1, 208, 208])
+#      0.03     0.0000          0  torch.nn.modules.activation.ReLU          torch.Size([1, 16, 104, 104])
+#      1.38     0.2071       9280  torch.nn.modules.conv.Conv2d              torch.Size([1, 16, 104, 104])
+#      0.07     0.0000          0  torch.nn.modules.activation.ReLU          torch.Size([1, 64, 106, 106])
+#     12.95     0.5551      24416  models.layers.squeezenet.FireM            torch.Size([1, 64, 106, 106])
+#     30.29     2.1688      95936  models.layers.squeezenet.FireM            torch.Size([1, 128, 106, 106])
+#     47.23     4.9100     217632  models.layers.squeezenet.FireM            torch.Size([1, 256, 106, 106])
+#     67.75     8.7558     388480  models.layers.squeezenet.FireM            torch.Size([1, 384, 106, 106])
+#    128.97    14.7963     656896  models.layers.yolo_layer.SPPF             torch.Size([1, 512, 106, 106])
+#      2.20     0.0000          0  models.layers.common_layer.Upsample_Concat  [torch.Size([1, 128, 106, 106]), torch.Size([1, 128, 106, 106])]
+#      0.36     0.0058        257  models.head.Classify                      torch.Size([1, 256, 106, 106])
+#    291.31    31.4021    1393057  Total use cpu
+#    291.31    31.4021    1393057  Per image use cpu
+
+#  0                -1       160  torch.nn.modules.conv.Conv2d            [1, 16, 3, 2, 1]
+#  1                -1         0  torch.nn.modules.activation.ReLU        [True]
+#  2                -1      9280  torch.nn.modules.conv.Conv2d            [16, 64, 3, 1, 2]
+#  3                -1         0  torch.nn.modules.activation.ReLU        [True]
+#  4                -1     24416  models.layers.squeezenet.FireM          [64, 16, 64, 64, 1]
+#  5                -1     95936  models.layers.squeezenet.FireM          [128, 32, 128, 128, 1]
+#  6                -1    217632  models.layers.squeezenet.FireM          [256, 48, 192, 192, 1]
+#  7                -1    388480  models.layers.squeezenet.FireM          [384, 64, 256, 256, 1]
+#  8                -1    656896  models.layers.yolo_layer.SPPF           [512, 512, 5]
+#  9           [-1, 4]         0  models.layers.common_layer.Upsample_Concat[1, 'nearest']
+# 10                -1       257  models.head.Classify                    [256, 1]
+
+#Model Summary: 137layers, 1393057 parameters, 1393057 gradients,image size is (640, 640), 6.1 GFLOPs in cpu
+# time (ms)     GFLOPs     params                                    module                       input_size
+#      0.07     0.0031        160  torch.nn.modules.conv.Conv2d              torch.Size([1, 1, 208, 208])
+#      0.03     0.0000          0  torch.nn.modules.activation.ReLU          torch.Size([1, 16, 104, 104])
+#      1.36     0.2071       9280  torch.nn.modules.conv.Conv2d              torch.Size([1, 16, 104, 104])
+#      0.07     0.0000          0  torch.nn.modules.activation.ReLU          torch.Size([1, 64, 106, 106])
+#      3.67     0.1388      24416  models.layers.squeezenet.FireM            torch.Size([1, 64, 106, 106])
+#      1.94     0.1305      95936  models.layers.squeezenet.FireM            torch.Size([1, 128, 53, 53])
+#      1.67     0.0739     217632  models.layers.squeezenet.FireM            torch.Size([1, 256, 26, 26])
+#      1.01     0.0281     388480  models.layers.squeezenet.FireM            torch.Size([1, 384, 13, 13])
+#      1.23     0.0474     656896  models.layers.yolo_layer.SPPF             torch.Size([1, 512, 6, 6])
+#      0.82     0.0000          0  models.layers.common_layer.Upsample_Concat  [torch.Size([1, 128, 53, 53]), torch.Size([1, 128, 53, 53])]
+#      0.13     0.0014        257  models.head.Classify                      torch.Size([1, 256, 53, 53])
+#     11.98     0.6302    1393057  Total use cpu
+#     11.98     0.6302    1393057  Per image use cpu
 # Parameters
 depth_multiple: 1.  # model depth multiple
 width_multiple: 1.  # layer channel multiple
@@ -23,20 +60,20 @@ depth_layer: []
 width_layer: [nn.Conv2d, FireM, SPPF]
 nc: 80
 backbone:
-  [[-1, nn.Conv2d, [16, 3, 2]],  #
+  [[-1, nn.Conv2d, [16, 3, 2, 1]],  #
    [-1, nn.ReLU, [True]],  #
-   [-1, nn.Conv2d, [16, 64, 3, 1]],  #
+   [-1, nn.Conv2d, [16, 64, 3, 1, 2]],  #
    [-1, nn.ReLU, [True]],  #
-   [-1, FireM, [64, 16, 64, 64, 0]],
-   [-1, FireM, [128, 32, 128, 128, 0]], # 0 means not maxpooling
-   [-1, FireM, [256, 48, 192, 192, 0]],
-   [-1, FireM, [384, 64, 256, 256, 0]],
+   [-1, FireM, [64, 16, 64, 64, 1]],
+   [-1, FireM, [128, 32, 128, 128, 1]], # 0 means not maxpooling, 1 means maxpooling
+   [-1, FireM, [256, 48, 192, 192, 1]],
+   [-1, FireM, [384, 64, 256, 256, 1]],
    [-1, SPPF, [512, 512, 5]],  #
   ]
 
 neck:
   [ [[-1, 4], Upsample_Concat, [1,'nearest']] ]
 head:
-  [[-1,  Classify, [256, nc]],  # Detect(P3, P4, P5)  if Classify or ObjClassify, nead SPPF
+  [[-1,  ObjClassify, [256, nc]],  # Detect(P3, P4, P5)  if Classify or ObjClassify, nead SPPF
   ]
 

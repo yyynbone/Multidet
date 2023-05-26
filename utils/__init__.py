@@ -18,3 +18,4 @@ from utils.callback import *
 from utils.cal_coco import *
 from utils.analyze import *
 from utils.tal import *
+from utils.flops_counter import *

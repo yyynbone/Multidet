@@ -155,7 +155,7 @@ def random_perspective(result, degrees=10, translate=.1, scale=.1, shear=10, per
         labels = labels[i]
         labels[:, 1:5] = new[i]
         if segments is not None:
-            segments =  segments[i]
+            segments = [segments[i_] for i_ in np.arange(0, len(segments))[i]]
     # if len(labels):
     #     labels[:, 1:5] = xyxy2xywh(labels[:, 1:5], w=result['img'].shape[1], h=result['img'].shape[0], clip=True, eps=1E-3)
     result['labels'] = labels

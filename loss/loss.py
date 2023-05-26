@@ -321,3 +321,26 @@ class ObjClassifyLoss():
             tobj[img_id, cls, gy1:gy2, gx1:gx2] = 1.
         return tobj
 
+
+class TeacherLoss:
+    def __init__(self, model, logger=None):
+        super().__init__(model, logger)
+
+    def __call__(self, p, targets):
+        pass
+
+
+def teacher_loss(student_out, teacher_out, temperature):
+    """
+    use the prediction of student and teacher, can be origin out or softmax or sigmoid out
+    :param student_out:
+    :param teacher_out:
+    :param temperature:
+    :return:
+    """
+    loss = torch.zeros(1, device=student_out.device)
+    if isinstance(student_out, list):
+        for (s_out, t_out) in zip(student_out, teacher_out):
+            loss += -torch.sum(s_out.sigmoid()/temperature.log() * t_out.sigmoid()/temperature)
+    return loss/student_out.shape[0]
+

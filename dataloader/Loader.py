@@ -3,8 +3,9 @@ import torch
 import random
 import numpy as np
 import cv2
+import math
 from copy import deepcopy
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, distributed
 
 from dataloader.load import select_image, select_video, load_images, load_labels, load_image_result, \
     rect_shape, load_mosaic, read_image, load_big2_small
@@ -48,6 +49,50 @@ class _RepeatSampler:
 
 # class Loader:
 #     def __init__(self):
+class SuffleLoader(DataLoader):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+    def shuffle(self):
+        # # object.__setattr__(self, 'dataset', dataset)
+        #
+        # self.sampler.data_source = dataset
+        #
+        # object.__setattr__(self, 'batch_sampler', _RepeatSampler(self.batch_sampler))
+        # self.iterator = super().__iter__()
+        # 相当于重新定义total_size和num_samples 的大小
+        # if self.drop_last and len(self.dataset) % self.batch_sampler.num_replicas != 0:
+        #     # Split to nearest available length that is evenly divisible.
+        #     # This is to ensure each rank receives the same amount of data when
+        #     # using this Sampler.
+        #     self.num_samples = math.ceil(
+        #         (len(self.dataset) - self.num_replicas) / self.num_replicas
+        #     )
+        # else:
+        #     self.num_samples = math.ceil(len(self.dataset) / self.num_replicas)
+        # self.total_size = self.num_samples * self.num_replicas
+        if isinstance(self.sampler, SuffleDist_Sample):
+            self.sampler.shuffle()
+            self.batch_size = min(self.batch_size, len(self.train_dataset))
+            # self.batch_sampler.__init__()
+
+class SuffleDist_Sample(distributed.DistributedSampler):
+    def __init__(self, dataset, shuffle=False, **kargs):
+        super().__init__(dataset, shuffle=shuffle, **kargs)
+
+    def shuffle(self):
+        if self.drop_last and len(self.dataset) % self.num_replicas != 0:  # type: ignore[arg-type]
+            # Split to nearest available length that is evenly divisible.
+            # This is to ensure each rank receives the same amount of data when
+            # using this Sampler.
+            self.num_samples = math.ceil(
+                (len(self.dataset) - self.num_replicas) / self.num_replicas  # type: ignore[arg-type]
+            )
+        else:
+            self.num_samples = math.ceil(len(self.dataset) / self.num_replicas)  # type: ignore[arg-type]
+        self.total_size = self.num_samples * self.num_replicas
+
+
 
 def get_dataset(path, pre_process, img_size=640, batch_size=16, logger=None, image_weights=False,
             single_cls=False, stride=32, pad=0.0, prefix='', bgr=True, filter_str='', select_class=(),
@@ -233,9 +278,10 @@ class LoadImagesAndLabels(Dataset):
 
         self.bkg_ratio = bkg_ratio
         self.obj_mask = obj_mask
+        
         self.cropped_imgsz = cropped_imgsz
-        if self.cropped_imgsz:
-            self.origin_results = deepcopy(self.results)
+
+        self.origin_results = deepcopy(self.results)
 
 
     def format(self, result):
@@ -261,12 +307,12 @@ class LoadImagesAndLabels(Dataset):
         img = np.ascontiguousarray(img[::-1])  # BGR to RGB
         return img, labels, class_label, trans_result
 
-    def index_shuffle(self):
+    def index_shuffle(self, obj_repeat=1,  bg_repeat=1, iou_thres=0.4, pix_thres=8, save_crop=False):
         if self.cropped_imgsz:
             # crop on line
             self.results = []
             for result in self.origin_results:
-                cropped_results = load_big2_small(result, self.cropped_imgsz)
+                cropped_results = load_big2_small(result, self.cropped_imgsz, obj_repeat,  bg_repeat, iou_thres, pix_thres, save_crop)
                 self.results.extend(cropped_results)
             self.indices = np.arange(len(self.results))
         else:

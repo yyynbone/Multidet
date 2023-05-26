@@ -1,0 +1,21 @@
+weights: None  # checkpoints/squeezenet.pt
+cfg: resnet18.yaml
+data: merge_scls.yaml
+data_prefile: data_preprocess.yaml
+hyp: hyp.yaml
+batch_size: 256
+bgr: 0
+last_conf: 0.6
+verbose: True
+visual_matched: False
+imgsz:
+- 256
+div_area:
+- 25
+- 50
+epochs: 1000
+rect: false
+world_size: 8
+loss: ClassifyLoss
+loss_supervision: 100
+patience: 800

@@ -100,6 +100,18 @@ class Conv(nn.Module):
     def forward_fuse(self, x):
         return self.act(self.conv(x))
 
+class ReluConv(nn.Module):
+    def __init__(self,
+                 in_channels,
+                 out_channels,
+                 k=3,
+                 stride=1,
+                 p=1):
+        super(ReluConv, self).__init__()
+        self.conv = Conv(in_channels, out_channels, k, stride, p, act=nn.ReLU(True))
+    def forward(self, x):
+        out = self.conv(x)
+        return out
 
 class DWConv(Conv):
     # Depth-wise convolution class
@@ -173,6 +185,7 @@ class Upsample_Concat(nn.Module):
         m = nn.Upsample((h,w), None, self.mode)
         x[0] = m(x[0])
         return torch.cat(x, self.d)
+
 
 
 class CrossConv(nn.Module):

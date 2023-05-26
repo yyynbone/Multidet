@@ -501,10 +501,15 @@ def plot_evolve(evolve_csv='path/to/evolve.csv'):  # from utils.plots import *; 
 def plot_labels(labels, names=(), save_dir=Path(''), logger=None):
     # plot dataset labels
     print_log(f"Plotting labels to {save_dir / 'labels.jpg'}... ", logger)
+    if isinstance(labels, list):
+        labels = np.concatenate(labels, 0)
+        labels[:, 1:] = xyxy2xywh(labels[:, 1:])
     c, b = labels[:, 0], labels[:, 1:].transpose()  # classes, boxes
     nc = int(c.max() + 1)  # number of classes
     x = pd.DataFrame(b.transpose(), columns=['x', 'y', 'width', 'height'])
 
+    print_log(f'width information is {x.width.describe()} \n most is {x.width.mode()} \n'
+              f'height information is {x.height.describe()} \n most is {x.height.mode()} \n ', logger)
     # seaborn correlogram
     sn.pairplot(x, corner=True, diag_kind='auto', kind='hist', diag_kws=dict(bins=50), plot_kws=dict(pmax=0.9))
     plt.savefig(save_dir / 'labels_correlogram.jpg', dpi=200)
@@ -525,8 +530,8 @@ def plot_labels(labels, names=(), save_dir=Path(''), logger=None):
     sn.histplot(x, x='width', y='height', ax=ax[3], bins=50, pmax=0.9)
 
     # rectangles
-    labels[:, 1:3] = 0.5  # center
-    labels[:, 1:] = xywh2xyxy(labels[:, 1:]) * 2000
+    labels[:, 1:3] = 0.5 * 128  # center
+    labels[:, 1:] = xywh2xyxy(labels[:, 1:], 1 / 128, 1 / 128) * 2000
     img = Image.fromarray(np.ones((2000, 2000, 3), dtype=np.uint8) * 255)
     for cls, *box in labels[:1000]:
         ImageDraw.Draw(img).rectangle(box, width=1, outline=colors(cls))  # plot
@@ -540,6 +545,7 @@ def plot_labels(labels, names=(), save_dir=Path(''), logger=None):
     plt.savefig(save_dir / 'labels.jpg', dpi=200)
     matplotlib.use('Agg')
     plt.close()
+
 
 def save_one_box(xyxy, im, file='image.jpg', gain=1.02, pad=10, square=False, BGR=False, save=True):
     # Save image crop as {file} with crop size multiple {gain} and {pad} pixels. Save and/or return crop

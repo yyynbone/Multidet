@@ -12,9 +12,15 @@ import os
 import json
 from utils.label_process import xyxy2xywh
 
+# def mkdir(path):
+#     if not os.path.exists(path):
+#         os.makedirs(path)
 def mkdir(path):
-    if not os.path.exists(path):
-        os.makedirs(path)
+    p = Path(path)
+    p_s = p.suffix
+    if p_s:
+        p = p.parent
+    p.mkdir(parents=True, exist_ok=True)
 
 def get_default_args(func):
     # Get func() default arguments
@@ -96,16 +102,6 @@ def make_divisible(x, divisor):
     # Returns x evenly divisible by divisor
     return math.ceil(x / divisor) * divisor
 
-# def area_filter(array, e_class=4, filter_idx=1):
-#     assert array.shape[0]%e_class==0, 'must be divided by e_class'
-#     idx = []
-#     for i in range(array.shape[0]):
-#         if i%e_class !=filter_idx :
-#             idx.append(i)
-#     return array[idx]
-
-def area_filter(array, filter_from=2):
-    return array[:, filter_from:]
 
 class ExpWA():
     def __init__(self,average=0., decay=0.999,iter=2000, updates=0):
@@ -130,7 +126,7 @@ def smooth_BCE(eps=0.1):
     # return positive, negative label smoothing BCE targets
     return 1.0 - 0.5 * eps, 0.5 * eps
 
-def intersect_dicts(da, db, exclude=(), key_match=True):
+def intersect_dicts(da, db, exclude=(), key_match=True, skip=False):
     if key_match:
         # Dictionary intersection of matching keys and shapes, omitting 'exclude' keys, using da values
         return {k: v for k, v in da.items() if k in db and not any(x in k for x in exclude) and v.shape == db[k].shape}
@@ -138,7 +134,8 @@ def intersect_dicts(da, db, exclude=(), key_match=True):
         new_csd = {}
         value = list(db.values())
         keys = list(db.keys())
-        for i, (k, v) in enumerate(da.items()):
+        i = 0
+        for (k, v) in da.items():
             if not any(x in k for x in exclude) and i<len(value):
                 if v.shape == value[i].shape:
                     new_csd[keys[i]] = v
@@ -146,6 +143,9 @@ def intersect_dicts(da, db, exclude=(), key_match=True):
                     print(f'{k} shape {v.shape} not match {keys[i]} shape {value[i].shape}')
             else:
                 print(f'{k} shape {v.shape} not match')
+                if skip:
+                    i-=1
+            i+=1
         return new_csd
 
 def get_latest_run(search_dir='.'):

@@ -194,6 +194,8 @@ def select_class_tuple(data_dict):
     :return: tuple or list
     """
     # dataset class eg: ['vehicle', 'bridge', 'ship','airport', 'harbor', 'airplane', 'helipad', 'helicopter']
+    if data_dict.get('xml_names'):
+        return data_dict['xml_names']
     data_class = data_dict.get('data_names', data_dict['names'])
     #  class we only want  eg:['airplane']
     select_class = data_dict['names']

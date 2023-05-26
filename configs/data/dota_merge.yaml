@@ -9,9 +9,9 @@
 
 
 # Train/val/test sets as 1) dir: path/to/imgs, 2) file: path/to/imgs.txt, or 3) list: [path/to/imgs1, path/to/imgs2, ..]
-path: ../data/essential/dota2  # dataset root dir # data of dota
-train: images/train  # train images (relative to 'path') 118287 images # filter the area under 25*25
-val: images/val  # train images (relative to 'path') 5000 images
+path: ../data/essential/merge_1024_576  # dataset root dir # data of dota
+train: labels/train.txt  # train images (relative to 'path') 118287 images # filter the area under 25*25
+val: labels/val.txt  # train images (relative to 'path') 5000 images
 
 #  Classes
 #nc: 80  # number of classes
@@ -25,6 +25,6 @@ val: images/val  # train images (relative to 'path') 5000 images
 #        'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear',
 #        'hair drier', 'toothbrush']  # class names
 nc: 8  # number of classes
-names: ['small_vehicle', 'large_vehicle', 'ship', 'harbor', 'bridge','airport', 'plane', 'helipad']
+names: ['vehicle', 'bridge', 'ship','airport', 'harbor', 'airplane', 'helipad', 'helicopter']
 
-xml_names: ['small_vehicle', 'large_vehicle', 'ship', 'harbor', 'bridge','airport', 'plane', 'helipad']
+

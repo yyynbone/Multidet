@@ -140,6 +140,8 @@ def main(opt):
                                           logger=opt.logger,
                                           bkg_ratio=getattr(opt, "bkg_ratio", 0),
                                           obj_mask=getattr(opt,"val_obj_mask", 0))
+            dataset.cropped_imgsz = getattr(opt, "val_cropped_imgsz", False)
+            dataset.index_shuffle()
             batch_size = min(opt.batch_size, len(dataset))
             opt.dataloader = DataLoader(dataset,
                           batch_size=batch_size,

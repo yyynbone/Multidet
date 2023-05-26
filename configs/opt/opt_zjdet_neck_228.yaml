@@ -1,0 +1,26 @@
+weights: results/train/228/zjdet_neck/exp/weights/best.pt
+cfg: zjdet_neck.yaml
+
+data: 228.yaml
+data_prefile: data_preprocess.yaml
+hyp: hyp.yaml
+batch_size: 32
+bgr: 0
+last_conf: 0.6
+verbose: True
+visual_matched: False
+imgsz:
+- 640
+div_area:
+- 5
+- 10
+epochs: 1000
+rect: false
+world_size: 1
+loss: LossV5
+loss_supervision: 50
+patience: 800
+
+resume: False
+train_cropped_imgsz: [832, 832]
+val_cropped_imgsz: [832, 832]
