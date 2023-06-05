@@ -24,3 +24,4 @@ patience: 800
 resume: False
 train_cropped_imgsz: [832, 832]
 val_cropped_imgsz: [832, 832]
+# device: 0,1

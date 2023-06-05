@@ -113,13 +113,18 @@ def segment2box(segment, width=640, height=640):
     x, y, = x[inside], y[inside]
     return np.array([x.min(), y.min(), x.max(), y.max()]) if any(x) else np.zeros((1, 4))  # xyxy
 
-def segments2boxes(segments):
-    # Convert segment labels to box labels, i.e. (cls, xy1, xy2, ...) to (cls, xywh)
+def segments2boxes_xyxy(segments):
+    # Convert segment labels to box labels, i.e. (cls, xy1, xy2, ...) to (cls, xyxy)
     boxes = []
     for s in segments:
         x, y = s.T  # segment xy
         boxes.append([x.min(), y.min(), x.max(), y.max()])  # cls, xyxy
-    return xyxy2xywh(np.array(boxes))  # cls, xywh
+    return np.array(boxes) # cls, xyxy
+
+def segments2boxes(segments):
+    # Convert segment labels to box labels, i.e. (cls, xy1, xy2, ...) to (cls, xywh)
+    boxes = segments2boxes_xyxy(segments)
+    return xyxy2xywh(boxes)  # cls, xywh
 
 def resample_segments(segments, n=1000):
     # Up-sample an (n,2) segment
@@ -200,5 +205,5 @@ def select_class_tuple(data_dict):
     #  class we only want  eg:['airplane']
     select_class = data_dict['names']
     se_id = [ data_class.index(sc) if sc in data_class else -1  for sc in select_class]
-    # print(se_id)
+    print(f'now we select class {select_class}, id in origin is {se_id}')
     return tuple(se_id)

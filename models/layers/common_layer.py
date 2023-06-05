@@ -166,7 +166,21 @@ class Concat(nn.Module):
         self.d = dimension
 
     def forward(self, x):
+        # return torch.cat(x, self.d)
+        bs, c, h, w = x[1].shape
+        _, u_c, u_h, u_w = x[0].shape
+        f_bais = h*w - u_h*u_w
+        if f_bais > 0:
+            pad = torch.zeros((bs, u_c, f_bais),dtype=x[0].dtype, device=x[0].device)
+            new = torch.concat([x[0].reshape(bs, u_c, -1), pad], dim=-1)
+            x[0] = new.reshape(bs, u_c, h, w)
+        elif f_bais < 0 :
+            new = x[0].reshape(bs, u_c, -1)[:, :, :h*w]
+            x[0] = new.reshape(bs, u_c, h, w)
+
         return torch.cat(x, self.d)
+        
+        
 
 
 class Upsample_Concat(nn.Module):
@@ -185,7 +199,6 @@ class Upsample_Concat(nn.Module):
         m = nn.Upsample((h,w), None, self.mode)
         x[0] = m(x[0])
         return torch.cat(x, self.d)
-
 
 
 class CrossConv(nn.Module):

@@ -29,3 +29,4 @@ nc: 5  # number of classes
 data_names: ['zjc', 'wzw', 'tk','zp', 'fj']
 names: ['zjc', 'wzw', 'tk','zp', 'fj' ]
 xml_names: ['zjc', 'wzw', 'tk','zp', 'fj' ]
+coco: ../data/ggpccd/COCO/annotation/origin.json

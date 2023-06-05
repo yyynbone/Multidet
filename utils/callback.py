@@ -54,7 +54,7 @@ class Callback():
                             print("jit trace wrong")
             if ni < 3:
                 f = self.save_dir / f'train_batch{ni}.jpg'  # filename
-                Thread(target=plot_images, args=(imgs, labels, paths, f), daemon=True).start()
+                Thread(target=plot_images, args=(imgs, labels, paths, f), daemon=False).start()
 
 
     def on_train_epoch_end(self, epoch):

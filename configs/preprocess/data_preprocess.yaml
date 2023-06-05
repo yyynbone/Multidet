@@ -26,7 +26,7 @@ train:
         format: 'pascal_voc'
         label_fields: ['class_labels']
 
-  sample_portion: 1. # random select sample
+
   rect: False
   augment: True
   label: True
@@ -50,7 +50,6 @@ train:
       p_ud: 0.0  # image flip up-down (probability)
       p_lr: 0.5  # image flip left-right (probability)
 val:
-  sample_portion: 1. # random select sample
   label: True
   rect: False
   augment: False

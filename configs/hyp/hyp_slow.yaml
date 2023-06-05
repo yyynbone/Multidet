@@ -37,7 +37,7 @@ seg_ce: False #BCE # per_BCE #BCE # CE  #use CE per_BCE or BCE
 label_smoothing: 0.1   # cp:cn = 1-0.5*0.1, 0.5*0.1
 
 # bg background classify
-pos_weight: 5  # if 0 use self_label_weight
+pos_weight: 2  # if 0 use self_label_weight
 
 use_BCE: True
 use_focal: False

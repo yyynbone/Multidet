@@ -32,10 +32,26 @@ def time_sync():
 def torch_distributed_zero_first(local_rank: int):
     """
     Decorator to make all processes in distributed training wait for each local_master to do something.
+         使用了 contextmanager 装饰器后，
+         def  f():
+             a = 1
+             yield
+             b = 2
+         with f():
+            c = 3
+
+        这等价于：
+
+        a = 1
+        try:
+            c = 3
+        finally:
+            n = 2
+
     """
     if local_rank not in [-1, 0]:
         dist.barrier(device_ids=[local_rank])
-    yield
+    yield # 保证yeild 后面的内容最后运行，即0 最后堵塞，故 rank=0 的程序先运行, 其它后运行
     if local_rank == 0:
         dist.barrier(device_ids=[0])
 
@@ -140,6 +156,32 @@ def infcheck(loss):
         loss = torch.tensor(loss)
     return torch.isinf(loss).sum()
 
+def set_cuda_visible_device(device='', newline=True, logger=None):
+    # device = 'cpu' or '0' or '0,1,2,3'
+    s = f'ZJDetection {date_modified()} torch {torch.__version__} '  # string
+    device = str(device).strip().lower().replace('cuda:', '')  # to string, 'cuda:0' to '0'
+    cpu = device == 'cpu'
+    if cpu:
+        os.environ['CUDA_VISIBLE_DEVICES'] = '-1'  # force torch.cuda.is_available() = False
+    elif device:  # non-cpu device requested
+        os.environ['CUDA_VISIBLE_DEVICES'] = device  # set environment variable
+        assert torch.cuda.is_available(), f'CUDA unavailable, invalid device {device} requested'  # check availability
+
+    cuda = not cpu and torch.cuda.is_available()
+    if cuda:
+        devices = device.split(',') if device else range(torch.cuda.device_count())  # range(torch.cuda.device_count())  # i.e. 0,1,6,7
+        space = ' ' * (len(s) + 1)
+        for i, d in enumerate(devices):
+            p = torch.cuda.get_device_properties(i)
+            s += f"{'' if i == 0 else space}CUDA:{d} ({p.name}, {p.total_memory / 1024 ** 2:.0f}MiB)\n"  # bytes to MB
+    else:
+        s += 'CPU\n'
+        devices = []
+    if not newline:
+        s = s.rstrip()
+    print_log(s, logger)
+    return  devices
+
 def select_device(device='', batch_size=None, newline=True, logger=None, rank=-1):
     # device = 'cpu' or '0' or '0,1,2,3'
     s = f'ZJDetection {date_modified()} torch {torch.__version__} '  # string
@@ -164,11 +206,13 @@ def select_device(device='', batch_size=None, newline=True, logger=None, rank=-1
     else:
         s += 'CPU\n'
 
+
     if not newline:
         s = s.rstrip()
     if rank in [-1.0]:
         print_log(s, logger)
     return torch.device('cuda:0' if cuda else 'cpu')
+    # return  devices
 
 def cal_flops(model,img_size,verbose=False):
     from thop import profile

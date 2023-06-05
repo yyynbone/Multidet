@@ -399,7 +399,7 @@ if __name__ == '__main__':
     FILE = Path(__file__).resolve()
     ROOT = FILE.parents[1]
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/resnet34.yaml', help='model.yaml')
+    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/zjdet_neck.yaml', help='model.yaml')
     parser.add_argument('--device', default='0', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--profile', default=True, help='profile model speed')
     parser.add_argument('--test', action='store_true', help='test all yolo*.yaml')
@@ -408,11 +408,12 @@ if __name__ == '__main__':
 
     print_args(FILE.stem, opt)
     device = select_device(opt.device)
-    ch_in = 1
-    input_shape = (ch_in, 208, 208)
+    ch_in = 3
+    nc = 5
+    input_shape = (ch_in, 540, 960)
     # Create model
     if check_yaml(opt.cfg):
-        model = Model(opt.cfg, ch=ch_in, nc=1, imgsz=(640, 640)).to(device)
+        model = Model(opt.cfg, ch=ch_in, nc=nc, imgsz=(640, 640)).to(device)
         model.train()
     else:
         weight = ROOT/ 'checkpoints/squeezenet.pt'

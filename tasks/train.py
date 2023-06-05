@@ -12,7 +12,7 @@ import torch.multiprocessing as mp
 from multiprocessing.shared_memory import ShareableList
 from loss import *
 from utils import (check_file, check_yaml, colorstr, get_latest_run, increment_path, print_args, print_mutation, load_args,
-                   set_logging,  fitness, plot_evolve, select_device, torch_distributed_zero_first)
+                   set_logging,  fitness, plot_evolve, set_cuda_visible_device, torch_distributed_zero_first)
 from tasks import train, before_train
 
 FILE = Path(__file__).resolve()
@@ -43,7 +43,7 @@ def parse_opt(known=False):
     parser.add_argument('--single-cls', action='store_true', help='train multi-class data as single-class')
     parser.add_argument('--adam', action='store_true', help='use torch.optim.Adam() optimizer')
     parser.add_argument('--sync-bn', action='store_true', help='use SyncBatchNorm, only available in DDP mode')
-    parser.add_argument('--workers', type=int, default=8, help='max dataloader workers (per RANK in DDP mode)')
+    parser.add_argument('--workers', type=int, default=4, help='max dataloader workers (per RANK in DDP mode)')
     parser.add_argument('--project', default='', help='save to project/name')
     parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
@@ -65,6 +65,7 @@ def parse_opt(known=False):
     parser.add_argument('--ignore-bkg', action='store_true', help='filter and image of background')
     parser.add_argument('--train-val-filter', action='store_true', help='filter first use the classify head')
     parser.add_argument('--val-train', action='store_true', help='valuate the train dataset')
+    parser.add_argument('--shuffle-epoch', type=int, default=50, help='shuffle crop dataset')
 
     parser.add_argument('--local_rank', type=int, default=-1, help='DDP parameter, do not modify')
     parser.add_argument('--node', type=int, default=0, help='computer node')
@@ -118,14 +119,14 @@ def ready(opt):
     return opt, train_data, train_preprocess, val_data, val_preprocess
 
 def main(local_rank, local_size, opt, train_data, train_preprocess, val_data, val_preprocess):
-    print('now we are in local_rank', local_rank)
+    # print('now we are in local_rank', local_rank)
     # local_rank could be 0-7
     addr, port, node, world_size = opt.addr, opt.port, opt.node, opt.world_size
     # set logger save to file:
     # Checks
     # print(f'in {local_rank}, save_dir is {opt.save_dir}, exist_ok is {opt.exist_ok}, {opt.name}')
     # DDP mode
-    device = select_device(opt.device, batch_size=opt.batch_size, rank=local_rank)
+
     if node != -1:
         assert torch.cuda.device_count() > local_rank, 'insufficient CUDA devices for DDP command'
         assert opt.batch_size % world_size == 0, '--batch-size must be multiple of CUDA device count'
@@ -138,6 +139,16 @@ def main(local_rank, local_size, opt, train_data, train_preprocess, val_data, va
                                 init_method="tcp://{}:{}".format(addr, port),
                                 rank=Rank,
                                 world_size=world_size)
+    else:
+        opt.device = str(opt.device).strip().lower().replace('cuda:', '')  # to string, 'cuda:0' to '0'
+        if opt.device == 'cpu':
+            device = 'cpu'
+        elif opt.device == '':
+            device = 'cuda:0'
+        else:
+            device = f'cuda:{opt.device}'
+        device = torch.device(device)
+        # device = select_device(opt.device, batch_size=opt.batch_size, rank=local_rank)
     with torch_distributed_zero_first(local_rank):   # multiprocess all start
         logger = set_logging(name=FILE.stem, filename=Path(Path(opt.save_dir) / 'train.log'), rank=local_rank)  # 需要重新定义
             # logger.setLevel(20) # 20means logging.INFO, 但此时handle全部清空，即无file handle
@@ -245,9 +256,11 @@ def run(**kwargs):
 if __name__ == "__main__":
     opt = parse_opt()
     # main(opt)
-    gpus = torch.cuda.device_count()
+    devices = set_cuda_visible_device(opt.device)
+    # print(os.environ['CUDA_VISIBLE_DEVICES'])
+    gpus = len(devices)
     if opt.world_size != gpus:
-        opt.world_size = 1 #gpus
+        opt.world_size = gpus #gpus
     # opt.workers = int(opt.workers /4)
     # opt.batch_size = int(opt.batch_size*opt.world_size)
     # print(opt.batch_size) 384
@@ -266,8 +279,9 @@ if __name__ == "__main__":
     #              args=(gpus, opt, train_dataset, val_loader),
     #              nprocs=gpus,
     #              join=True)
-
+    
     opt, train_data, train_preprocess, val_data, val_preprocess = ready(opt)
+
     if opt.world_size==1:
         opt.node = -1
         main(-1, gpus, opt, train_data, train_preprocess, val_data, val_preprocess)

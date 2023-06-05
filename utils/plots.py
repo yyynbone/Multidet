@@ -204,7 +204,7 @@ def map_visualization(x, f_path=Path('runs/detect/exp')):
             fig.savefig(f, dpi=300, bbox_inches='tight')
         plt.close()
 
-def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max_size=1920, max_subplots=16):
+def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max_size=3840, max_subplots=16):
     # Plot image grid with labels
     if isinstance(targets,tuple):
         targets,seg_tar = targets  # detect_out  seg_out(bs,h,w)
@@ -322,7 +322,7 @@ def visual_images(im,  pred, target=None, paths=None, fname='images.jpg', names=
         im_t_p[0: h, i * w: (i + 1) * w, :] = im
 
     # Annotate
-    fs = int((h + w) * 0.01)  # font size
+    fs = min(int((h + w) * 0.01), 16)  # font size
     annotator = Annotator(im_t_p, line_width=round(fs / 10), font_size=fs, pil=True)
 
     flag = [  ' Pred', ' GT']
@@ -363,6 +363,7 @@ def visual_images(im,  pred, target=None, paths=None, fname='images.jpg', names=
                 else:
                     label = ''
                 annotator.box_label(box, label, color=color)
+    # print('saved in', fname)
     annotator.im.save(fname)  # save
 
 def plot_lr_scheduler(optimizer, scheduler, epochs=300, save_dir=''):
@@ -625,7 +626,7 @@ def visual_match_pred(im, match_id, pred, target, img_path, save_dir='.', names=
         outfile = os.path.join(save_path, img_name)
         # visual_images(im, bbox_result, gt_result, img_path, outfile, names)
         Thread(target=visual_images, args=(im, bbox_result, gt_result, img_path, outfile, names),
-               daemon=True).start()
+               daemon=False).start()
 
 def save_object(ims, targets, preds_float, paths=None, save_dir='exp', visual_task=0, conf_ts=0.4, f_map=None):
 

@@ -6,13 +6,16 @@ import cv2
 import math
 from copy import deepcopy
 from torch.utils.data import Dataset, DataLoader, distributed
+from tqdm import tqdm
+from pathlib import Path
+import shutil
 
 from dataloader.load import select_image, select_video, load_images, load_labels, load_image_result, \
     rect_shape, load_mosaic, read_image, load_big2_small
 
 from dataloader.transform import Transfrom, gray
 from dataloader.augmentations import mask_label
-from utils import print_log, xyxy2xywh
+from utils import print_log, xyxy2xywh, torch_distributed_zero_first
 
 
 class InfiniteDataLoader(DataLoader):
@@ -52,8 +55,9 @@ class _RepeatSampler:
 class SuffleLoader(DataLoader):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        
-    def shuffle(self):
+        self.__initialized = False
+
+    def shuffle_index(self, local_rank):
         # # object.__setattr__(self, 'dataset', dataset)
         #
         # self.sampler.data_source = dataset
@@ -71,16 +75,20 @@ class SuffleLoader(DataLoader):
         # else:
         #     self.num_samples = math.ceil(len(self.dataset) / self.num_replicas)
         # self.total_size = self.num_samples * self.num_replicas
+        with torch_distributed_zero_first(local_rank):
+            self.dataset.index_shuffle(rank=local_rank)
         if isinstance(self.sampler, SuffleDist_Sample):
-            self.sampler.shuffle()
-            self.batch_size = min(self.batch_size, len(self.train_dataset))
+            self.sampler.shuffle_index()
+            # self.batch_size = min(self.batch_size, len(self.dataset))  # ValueError: batch_size attribute should not be set after SuffleLoader is initialized
             # self.batch_sampler.__init__()
+
+
 
 class SuffleDist_Sample(distributed.DistributedSampler):
     def __init__(self, dataset, shuffle=False, **kargs):
         super().__init__(dataset, shuffle=shuffle, **kargs)
 
-    def shuffle(self):
+    def shuffle_index(self):
         if self.drop_last and len(self.dataset) % self.num_replicas != 0:  # type: ignore[arg-type]
             # Split to nearest available length that is evenly divisible.
             # This is to ensure each rank receives the same amount of data when
@@ -110,12 +118,11 @@ def get_dataset(path, pre_process, img_size=640, batch_size=16, logger=None, ima
     pre_process['rect'] = rect
     pre_process['augment'] = augment
 
-    # select sample randomly
-    portion = pre_process.get('sample_portion', 1)
 
-    img_files = select_image(path, filter_str=filter_str, remove_str='_mask', sample=portion, bg_gain=1, obj_gain=1)
+
+    img_files = select_image(path, filter_str=filter_str, remove_str='_mask', sample=1, bg_gain=1, obj_gain=1)
     assert img_files, f'{prefix}No images found'
-    print_log(f'now we found {len(img_files)} images in dataset', logger)
+    print_log(f'{prefix}now we found {len(img_files)} images in  dataset', logger)
 
     results = load_images(img_files, img_size=img_size)
 
@@ -135,10 +142,11 @@ def get_dataset(path, pre_process, img_size=640, batch_size=16, logger=None, ima
                 if result['instance_segments'] is not None:
                     result['instance_segments'][:, 0] = 0
         if rect:
-            results = rect_shape(results, pad, stride, batch_size)
+            results = rect_shape(results, img_size, pad, stride, batch_size)
     pre_process['img_size'] = img_size
     pre_process['mosaic'] = pre_process.get('mosaic', 0.3) if augment and not rect else 0 # load 4 images at a time into a mosaic (only during training)
     pre_process["gray"] = not bgr
+    results[0]['select_class'] = select_class
     return results, pre_process
 
 
@@ -254,11 +262,16 @@ class LoadImagesAndLabels(Dataset):
         random.shuffle(self.indices)
         self.bkg_ratio = bkg_ratio
     """
-    def __init__(self, pre_process, results, logger=None, bkg_ratio=0, obj_mask=0, cropped_imgsz=False):
+    def __init__(self, pre_process, results, logger=None, bkg_ratio=0, obj_mask=0, cropped_imgsz=False,
+                 obj_repeat=1, bg_repeat=1, iou_thres=0.4, pix_thres=8, slide_crop=False, sample_portion=1):
 
         self.mask_labels = pre_process.get('mask_label', False)
         self.mosaic = pre_process.get('mosaic', 0)
         self.gray = pre_process.get('gray')
+        self.logger = logger
+        self.imgsz =  pre_process['img_size']
+        self.p = Path(results[0]['filename']).parents[1]
+        self.select_class = results[0]['select_class']
 
         if pre_process.get('label', False):
             self.labels = [result['labels'] for result in results]
@@ -283,6 +296,12 @@ class LoadImagesAndLabels(Dataset):
 
         self.origin_results = deepcopy(self.results)
 
+        self.obj_repeat = obj_repeat
+        self.bg_repeat = bg_repeat
+        self.iou_thres = iou_thres
+        self.pix_thres = pix_thres
+        self.slide_crop = slide_crop
+        self.portion = sample_portion
 
     def format(self, result):
         trans_result = deepcopy(result)
@@ -299,6 +318,12 @@ class LoadImagesAndLabels(Dataset):
             labels[:, 1:5] = xyxy2xywh(labels[:, 1:5], w=trans_result['img'].shape[1], h=trans_result['img'].shape[0], clip=True,
                                        eps=1E-3)
             if labels.shape[0]:
+                # select category we wanted and sequence it from 0:
+                # if l.ndim>1:
+                for i, sc in enumerate(self.select_class):
+                    # l[l[..., 0]==sc][..., 0] == i # this is false, cant change l
+                    labels[labels[..., 0] == sc, 0] = i
+                    
                 class_label += 1
 
         # Convert
@@ -307,14 +332,51 @@ class LoadImagesAndLabels(Dataset):
         img = np.ascontiguousarray(img[::-1])  # BGR to RGB
         return img, labels, class_label, trans_result
 
-    def index_shuffle(self, obj_repeat=1,  bg_repeat=1, iou_thres=0.4, pix_thres=8, save_crop=False):
+    def index_shuffle(self, rank=-1):
+
+        # print(f'now we select sample {self.portion} in {rank}')
+        # self.indices = random.choices(range(len(self.origin_results)),
+        #                               k=int(len(self.origin_results) * self.portion))  # rand weighted idx
+        # self.select_result = self.origin_results[]
         if self.cropped_imgsz:
-            # crop on line
-            self.results = []
-            for result in self.origin_results:
-                cropped_results = load_big2_small(result, self.cropped_imgsz, obj_repeat,  bg_repeat, iou_thres, pix_thres, save_crop)
-                self.results.extend(cropped_results)
+            slide_crop = self.slide_crop
+            crop_dir = 'slide_crop' if slide_crop else 'center_crop'
+            path = str(self.p / crop_dir)
+            if rank in [-1, 0]:
+                crop_flag = 1
+            else:
+                crop_flag = 0
+            if Path(path).exists() and slide_crop:
+                crop_flag = 0
+
+            if crop_flag:
+                if Path(path).exists() and not slide_crop:
+                    shutil.rmtree(path)
+                    print('remove dir:', path)
+                # crop on line
+                self.results = []
+                obj_repeat = self.obj_repeat
+                bg_repeat = self.bg_repeat
+                iou_thres = self.iou_thres
+                pix_thres = self.pix_thres
+                for result in tqdm(self.origin_results, total=len(self.origin_results), bar_format='', desc=f'crop big picture to {crop_dir}'):
+                    cropped_results = load_big2_small(result, self.cropped_imgsz, crop_dir, obj_repeat,  bg_repeat, iou_thres, pix_thres, slide_crop=slide_crop)
+                    # print(f"{result['filename']} cropped done,{list(result.keys())} crop images {len(cropped_results)}")
+                    self.results.extend(cropped_results)
+                print_log(f'cropped images {len(self.results)}', self.logger)
+
+            else:
+                img_files = select_image(path)
+                assert img_files, f'cropped dataset {path} No images found'
+                print_log(f'now we found {len(img_files)} images in dataset', self.logger)
+
+                results = load_images(img_files, img_size=self.imgsz)
+                results = load_labels(results,  logger=self.logger)
+                self.results = results
             self.indices = np.arange(len(self.results))
+            if slide_crop:
+                self.cropped_imgsz=False
+
         else:
             self.indices = np.arange(len(self.results))
             if self.bkg_ratio:
@@ -326,7 +388,11 @@ class LoadImagesAndLabels(Dataset):
                 mask_indices = -(1 + self.obj_index)
                 self.indices = np.concatenate((self.indices, mask_indices))
         # self.indices = -(1 + self.obj_index)
-        random.shuffle(self.indices)
+        # random.shuffle(self.indices)
+        # select sample randomly
+        print(f'now we select sample {self.portion} in {rank}')
+        self.indices = random.choices(range(len(self.indices)), k=int(len(self.indices)*self.portion))  # rand weighted idx
+        print_log(f'now we shuffle and now dataset length is {len(self)}', self.logger)
 
     def __len__(self):
         return len(self.indices)
@@ -392,7 +458,7 @@ class LoadImagesAndLabels(Dataset):
         return torch.stack(imgs, 0), col_target, paths# , shapes
 
 class LoadImages(LoadImagesAndLabels):
-    def __init__(self, path, img_size=640, stride=32, auto=True, is_bgr=True):
+    def __init__(self, path, img_size=640, stride=32, auto=True, is_bgr=True, slide_crop=None):
         pre_process = {'transform': {"resize": None,'adapt_pad':{'auto':auto, 'rectangle_stride': stride}} }
         self.gray = not is_bgr
         if isinstance(img_size, int):
@@ -419,6 +485,7 @@ class LoadImages(LoadImagesAndLabels):
         assert self.nf > 0, f'No images or videos found in {path}.'
         # super().__init__(pre_process, results)
         self.T = Transfrom(pre_process)
+        self.slide_crop = slide_crop
 
 
     def __iter__(self):
@@ -433,7 +500,7 @@ class LoadImages(LoadImagesAndLabels):
         if self.video_flag[self.count]:
             # Read video
             self.mode = 'video'
-            ret_val, img0 = self.cap.read()
+            ret_val, img0 = self.cap.read()   # return True, shape([720, 1280,3])
             while not ret_val:
                 self.count += 1
                 self.cap.release()
@@ -455,8 +522,20 @@ class LoadImages(LoadImagesAndLabels):
             s = f'image {self.count}/{self.nf} {path}: '
 
         result = load_image_result(img0, self.img_size)
-        img, labels, class_label, trans_result = self.format(result)
+        if self.slide_crop is not None:
+            imgs = []
+            self.crop_axis = []
+            cropped_results = load_big2_small(result, self.slide_crop, 'slide_crop', 1, 1, 0.4,
+                                              8, save_crop=False, slide_crop=True)
+            for result in cropped_results:
+                img, labels, class_label, trans_result = self.format(result)
+                self.crop_axis.append(result['axis'])
 
+                imgs.append(img)
+            img = np.array(imgs)
+                
+        else:
+            img, labels, class_label, trans_result = self.format(result)
         return path, img, img0, self.cap, s
 
     def new_video(self, path):
@@ -466,6 +545,29 @@ class LoadImages(LoadImagesAndLabels):
 
     def __len__(self):
         return self.nf  # number of files
+
+    def merge2big(self, pred, img, img0):
+        """
+        :param pred: (bs, (n,4+1+cls)),  tensor per image [xywh, conf, cls]
+        :return:
+        """
+        # for i, axis in enumerate(self.crop_axis):
+        #     bx1, by1, bx2, by2 = axis
+        # merge2big
+        if self.slide_crop is not None:
+            device, l_shape = pred.device, pred.shape[-1]
+            bxy = torch.tensor(self.crop_axis)[:, None, :2]  # (bs, 1, 2)
+            gain = min(self.img_size[0] / self.slide_crop[0], self.img_size[1] / self.slide_crop[1])
+            pred[..., :4] /= gain
+            pred[:, :, :2] += bxy.to(device)
+            pred = pred.reshape(1, -1, l_shape)
+            img = img0.transpose((2, 0, 1))  # HWC to CHW
+            img = np.ascontiguousarray(img[::-1])  # BGR to RGB
+            img = torch.from_numpy(img[None]).to(device).float()
+            img /= 255  # 0 - 255 to 0.0 - 1.0
+        return pred, img
+
+
 
 class LoadStreams:
     # streamloader, i.e. `python detect.py --source 'rtsp://example.com/media.mp4'  # RTSP, RTMP, HTTP streams`

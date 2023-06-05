@@ -291,17 +291,18 @@ def select_score_from_json(pred_json,score_thresh=0.1):
             new_annos.append(anno)
     return new_annos
 
-def visual_return(cocoeval, anno, save_dir, img_prefix, class_area=None, iou_id=0, score_thresh=0.001, cal_bou=False, map_match=False, logger=None):
+def visual_return(cocoeval, anno, save_dir, img_prefix, class_area=None, iou_id=0, score_thresh=0.001, cal_bou=False, map_match=False, logger=None, save_visual=False):
     # class_area=[[1,4,7],[3,5,8,9],[2,6]] means small, medium, big category
 
     data_infos, cat_ids, cat2label, classnames = load_annotations(anno)
-    visual_save_path = os.path.join(save_dir, 'visual_images')
-    mkdir(visual_save_path)
+    if save_visual:
+        visual_save_path = os.path.join(save_dir, f'coco_visual_images_{score_thresh}'.replace(".", "_"))
+        mkdir(visual_save_path)
 
-    for is_igmatch in ['matched', 'false_pred', 'not_matched']:
-        save_path = os.path.join(visual_save_path, is_igmatch)
-        if not os.path.exists(save_path):
-            os.makedirs(save_path)
+        for is_igmatch in ['matched', 'false_pred', 'not_matched']:
+            save_path = os.path.join(visual_save_path, is_igmatch)
+            if not os.path.exists(save_path):
+                os.makedirs(save_path)
 
     show_dict = defaultdict(list)
     aRng = cocoeval.params.areaRng
@@ -378,9 +379,6 @@ def visual_return(cocoeval, anno, save_dir, img_prefix, class_area=None, iou_id=
                         for j in i['bbox']:
                             j = max(int(j), 0)
                             box_sc.append(j)
-
-
-
                         box_sc.extend([i['score'], cat_id])
 
                         if did in true_det:
@@ -407,19 +405,32 @@ def visual_return(cocoeval, anno, save_dir, img_prefix, class_area=None, iou_id=
         all_cat_pred.append(bbox_result[:, :-1])
         all_correct_recall.append(all_corrected)
 
+        if save_visual:
 
-        if not cat_corrected[:, 1].all():
-            is_igmatch = 'not_matched'
-        img_name = data_infos[imageid - 1]['file_name']
-        img_path = os.path.join(img_prefix, img_name)
-        save_path = os.path.join(visual_save_path, is_igmatch)
-        outfile = os.path.join(save_path, img_name)
-        im = cv2.imread(img_path)  # BGR
-        gt_result[:, -2] -= 1 # category from 1, so substract 1
-        bbox_result[:, -2] -= 1 # category from 1
-        Thread(target=visual_images, args=(im, bbox_result, gt_result, img_path, outfile, classnames),
-               daemon=True).start()
-        # visual_images(im, gt_result, bbox_result, img_path, outfile, classnames)
+            img_name = data_infos[imageid - 1]['file_name']
+            img_path = os.path.join(img_prefix, img_name)
+
+            all_gt_num = len(cat_corrected)
+            matched_num =  cat_corrected[:, 1].sum()
+            if not cat_corrected[:, 1].all():
+                is_igmatch = 'not_matched'
+                print(f'{img_name} loss match')
+            if all_gt_num != matched_num:
+                print(f'{all_gt_num-matched_num} loss match in {img_name}')
+                # print(cat_corrected)
+
+            save_path = os.path.join(visual_save_path, is_igmatch)
+            outfile = os.path.join(save_path, img_name)
+            im = cv2.imread(img_path)  # BGR
+            im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
+            visual_gt = deepcopy(gt_result)
+            visual_pred = deepcopy(bbox_result)
+            visual_gt[:, -2] -= 1 # category from 1, so substract 1
+            visual_pred[:, -2] -= 1 # category from 1
+            # print(f'save {outfile}')
+            Thread(target=visual_images, args=(im, visual_pred, visual_gt, img_path, outfile, classnames),
+                   daemon=False).start()  # daemon为真，则表示守护线程，即程序不会因为子进程没跑完而堵塞，直接主进程停止
+            # visual_images(im, gt_result, bbox_result, img_path, outfile, classnames)
 
     cat_recalled = np.concatenate(cat_recalled,axis=0)
     all_cat_pred = np.concatenate(all_cat_pred, axis=0)

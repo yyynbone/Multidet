@@ -12,7 +12,7 @@ from glob import glob
 
 from datetime import datetime
 
-from .utils import mkdir, get_pic_id_map, convert_dict2catgories, get_anno_and_sort_imgid
+from .data_utils import mkdir, get_pic_id_map, convert_dict2catgories, get_anno_and_sort_imgid
 
 import logging as log
 

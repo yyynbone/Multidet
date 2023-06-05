@@ -625,57 +625,70 @@ def classify_match(pred_out, class_label, conf_ts=0.5, logger=None):
         # logger_func(f"there are bg number {bg_num},  object number {obj_num}, pred object is {pred_num}, obj_matched {obj_match_num},  so P/{p:.3f} R/{r:.3f}")
     return ps, rs, accus
 
-def det_coco_calculate(weights, data, task, save_dir, logger, jdict, last_conf, dataloader, visual_matched):
-    is_coco = isinstance(data.get('val'), str) and data['val'].endswith('val.json')  # COCO dataset
+def det_coco_calculate(weights, data, task, save_dir, logger, jdict, last_conf, visual_matched):
+    is_coco = isinstance(data.get('coco'), str) # and data['coco'].endswith('.json')  # COCO dataset
     w = Path(weights[0] if isinstance(weights, list) else weights).stem if weights is not None else ''  # weights
     # anno_json = str(Path(data.get('path', '../coco')) / 'annotations/instances_val2017.json')  # annotations json
-    anno_json = str(Path(data.get('path', '../coco')) / f'COCO/annotation/{task}.json')  # annotations json
-    pred_json = str(save_dir / f"{w}_predictions.json")  # predictions json
-    print_log(f'\nEvaluating pycocotools mAP... saving {pred_json}...', logger)
+    # anno_json = str(Path(data.get('path', '../coco')) / f'COCO/annotation/{task}.json')  # annotations json
 
+    pred_json = str(save_dir / f"{w}_predictions.json")  # predictions json
+
+    convert_small2big_json(jdict)
     ######### for Imageid  of filename 2 Imageid ################
-    with open(anno_json, 'r') as f:
-        images = json.load(f)['images']
-    image_file_id = {}
-    for img_info in images:
-        file_name_no_suffix = img_info['file_name'].split('.')[0]
-        image_file_id[file_name_no_suffix] = img_info['id']
-    for pic_info in jdict:
-        pic_info['image_id'] = image_file_id[pic_info['image_name']]
+    try:
+        anno_json = str(Path(data['coco']))
+        with open(anno_json, 'r') as f:
+            images = json.load(f)['images']
+        image_file_id = {}
+        for img_info in images:
+            file_name_no_suffix = img_info['file_name'].split('.')[0]
+            image_file_id[file_name_no_suffix] = [img_info['file_name'], img_info['id']]
+        for pic_info in jdict:
+            pic_info['image_name'], pic_info['image_id'] = image_file_id[pic_info['image_name']]
+    except Exception as e:
+        print_log(f'open anno file ERROR: {e}', logger)
 
     with open(pred_json, 'w') as f:
         json.dump(jdict, f, indent=4)
+
+    print_log(f'\nEvaluating pycocotools mAP... saving {pred_json}...', logger)
 
     try:  # https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocoEvalDemo.ipynb
         from pycocotools.coco import COCO
         from pycocotools.cocoeval import COCOeval
 
         anno = COCO(anno_json)  # init annotations api
+
+        pred_json_c = select_score_from_json(pred_json, score_thresh=0.1)
+
+        pred = anno.loadRes(pred_json_c)  # init predictions api
+        eval = COCOeval(anno, pred, 'bbox')
+        eval.params.maxDets = [10, 300, 5000]
+        eval.params.iouThrs = np.linspace(.05, 0.95, int(np.round((0.95 - .05) / .1)) + 1, endpoint=True)
+        # if is_coco:
+        #     eval.params.imgIds = [int(Path(x).stem) for x in dataloader.dataset.img_files]  # image IDs to evaluate
+        eval.evaluate()
+        eval.accumulate()
+        eval.summarize()
+        map, map50 = eval.stats[:2]  # update results (mAP@0.5:0.95, mAP@0.5)
+
+        # with open(data[task], 'r') as f:
+        #     img0 = f.readline()
+        # img_prefix = os.path.split(img0)[0]
+        img_prefix = str(data[task])
+
         for conf_t in last_conf:
-            pred_json_c = select_score_from_json(pred_json, score_thresh=conf_t)
+            print_log(
+                f"##########################\nnow we collect and visual result with iou thresh of "
+                f"{eval.params.iouThrs[0]} and conf thresh of {conf_t} in origin", logger=logger)
 
-            pred = anno.loadRes(pred_json_c)  # init predictions api
-            eval = COCOeval(anno, pred, 'bbox')
-            if is_coco:
-                eval.params.imgIds = [int(Path(x).stem) for x in dataloader.dataset.img_files]  # image IDs to evaluate
-            eval.evaluate()
-            eval.accumulate()
-            eval.summarize()
-            map, map50 = eval.stats[:2]  # update results (mAP@0.5:0.95, mAP@0.5)
-
-            if visual_matched:
-                with open(data[task], 'r') as f:
-                    img0 = f.readline()
-                img_prefix = os.path.split(img0)[0]
-                print_log(
-                    f"##########################\nnow we collect and visual result with iou thresh of "
-                    f"0.5 and conf thresh of {conf_t}", logger=logger)
-
-                visual_return(eval, anno, save_dir, img_prefix, class_area=None, score_thresh=conf_t,
-                              logger=logger)
+            visual_return(eval, anno, save_dir, img_prefix, class_area=None, score_thresh=conf_t,
+                          logger=logger, save_visual=visual_matched)
+            visual_matched = False
 
     except Exception as e:
         print_log(f'pycocotools unable to run: {e}', logger)
+        
 def det_calculate(stats, div_area, nc, last_conf, save_dir, names, plots,verbose, logger):
     s = ('%20s' + '%11s' * 7) % ('Class', 'Labels', 'R_num', 'P_num', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
     p, r, mp, mr, map50, map =  0.0, 0.0, 0.0, 0.0, 0.0, 0.0
@@ -716,3 +729,19 @@ def det_calculate(stats, div_area, nc, last_conf, save_dir, names, plots,verbose
                             f'{names[c]}_over_{div_ang}', nt[i, -1], pred_truth[i, -1], lev_np[i, -1],
                             p[i, -1], r[i, -1], ap50[i, -1], ap[i, -1]), logger)
     return mp, mr, map50, map, ap, ap_class, p, r
+
+def convert_small2big_json(jdict):
+    for pic_info in jdict:
+        file_name_split = pic_info['image_name'].split('_')
+        if len(file_name_split) > 4:
+            try:
+                xxyy = file_name_split[-4:]
+                big_f_name = '_'.join(file_name_split[:-4])
+                x_bias, y_bias = int(xxyy[0]), int(xxyy[2])
+                box = pic_info['bbox']
+                box[0] += x_bias
+                box[1] += y_bias
+                pic_info['small_image_name'] = pic_info['image_name']
+                pic_info['image_name'] = big_f_name
+            except Exception as e:
+                print('convert_small2big error', e)

@@ -32,7 +32,7 @@ def run_anchor(dataset, model, thr=4.0, imgsz=640, logger=None):
     print_log(str(det.anchors), logger)
     print_log('New anchors saved to model. Update model config to use these anchors in the future.', logger)
 
-def check_anchors(dataset, model, thr=4.0, logger=None):
+def check_anchors(dataset, model, imgsz=640, thr=4.0, logger=None):
     # Check anchor fit to data, recompute if necessary
     m = model.module.model[-1] if hasattr(model, 'module') else model.model[-1] # Detect()
     if hasattr(m, 'anchors'):
@@ -41,13 +41,14 @@ def check_anchors(dataset, model, thr=4.0, logger=None):
             for result in dataset.results:
                 ratio_w = result.get('rect_shape', result['img_size'])[1]/ result['ori_shape'][1]
                 ratio_h = result.get('rect_shape', result['img_size'])[0] / result['ori_shape'][0]
-                wh = result['labels'][:, 3:5] * np.array([ratio_w, ratio_h])
+                wh = (result['labels'][:, 3:5] - result['labels'][:, 1:3] )* np.array([ratio_w, ratio_h])
                 resized_wh.append(wh)
 
             scale = np.random.uniform(0.95, 1.05, size=(len(resized_wh), 1)) # augment scale
             wh = torch.tensor(np.concatenate([l * s for s, l in zip(scale, resized_wh)])).float()  # wh
 
             def metric(k):  # compute metric
+                # print(wh.shape, k)
                 r = wh[:, None] / k[None]
                 x = torch.min(r, 1 / r).min(2)[0]  # ratio metric
                 best = x.max(1)[0]  # best_x
@@ -56,7 +57,8 @@ def check_anchors(dataset, model, thr=4.0, logger=None):
                 return bpr, aat
 
             anchors = m.anchors.clone() * m.stride.to(m.anchors.device).view(-1, 1, 1)  # current anchors
-            bpr, aat = metric(anchors.cpu().view(-1, 2))
+            anchors  = anchors.cpu().view(-1, 2)
+            bpr, aat = metric(anchors)
             s = f'\n{PREFIX}{aat:.2f} anchors/target, {bpr:.3f} Best Possible Recall (BPR). '
             if bpr > 0.98:  # threshold to recompute
                 print_log(f'{s}Current anchors are a good fit to dataset', logger)
@@ -65,10 +67,12 @@ def check_anchors(dataset, model, thr=4.0, logger=None):
             else:
                 print_log(f'{s}Anchors are a poor fit to dataset, attempting to improve...', logger)
                 na = m.anchors.numel() // 2  # number of anchors
-                try:
-                    anchors = kmean_anchors(dataset, n=na, thr=thr, gen=1000, verbose=False, logger=logger)
-                except Exception as e:
-                    print_log(f'{PREFIX}ERROR: {e}', logger)
+                # try:
+                #     anchors = kmean_anchors(dataset, n=na, thr=thr, gen=1000, verbose=False, logger=logger)
+                # except Exception as e:
+                #     print_log(f'{PREFIX}ERROR: {e}', logger)
+                anchors = kmean_anchors(dataset, n=na, img_size=imgsz, thr=thr, gen=1000, verbose=False, logger=logger)   #return numpy
+
                 new_bpr = metric(anchors)[0]
                 if new_bpr > bpr:  # replace anchors
                     anchors = torch.tensor(anchors, device=m.anchors.device).type_as(m.anchors)
@@ -90,7 +94,7 @@ def kmean_anchors(dataset='./data/coco128.yaml', n=9, img_size=640, thr=4.0, gen
             verbose: print all results
 
         Return:
-            k: kmeans evolved anchors
+            k: kmeans evolved anchors , numpy
 
         Usage:
             from utils.autoanchor import *; _ = kmean_anchors()
@@ -123,17 +127,33 @@ def kmean_anchors(dataset='./data/coco128.yaml', n=9, img_size=640, thr=4.0, gen
         return k
 
     if isinstance(dataset, str):  # *.yaml file
-        with open(dataset, errors='ignore') as f:
+        from dataloader import get_dataset
+        from utils import select_class_tuple, check_yaml, check_dataset
+
+        with open(check_yaml(dataset), errors='ignore') as f:
             data_dict = yaml.safe_load(f)  # model dict
-        from dataloader import LoadImagesAndLabels
-        dataset = LoadImagesAndLabels(data_dict['train'],img_size=img_size, augment=True, rect=True,logger=logger)
+        data_dict = check_dataset(data_dict)
+        with open(check_yaml('data_preprocess.yaml'), errors='ignore') as f:
+            data_pre = yaml.safe_load(f)  # load hyps dict
+
+        results, _ = get_dataset(data_dict['train'],
+                              data_pre['val'],
+                              img_size=img_size,
+                              logger=logger,
+                              select_class=select_class_tuple(data_dict))
+        img_size = None
+    else:
+        results = dataset.results
     resized_wh = []
-    for result in dataset.results:
-        ratio_w = result.get('rect_shape', result['img_size'])[1] / result['ori_shape'][1]
-        ratio_h = result.get('rect_shape', result['img_size'])[0] / result['ori_shape'][0]
-        wh = result['labels'][:, 3:5] * np.array([ratio_w, ratio_h])
+    for result in results:
+        if img_size is not None:
+            ratio_w = result.get('rect_shape', result['img_size'])[1] / result['ori_shape'][1]
+            ratio_h = result.get('rect_shape', result['img_size'])[0] / result['ori_shape'][0]
+        else:
+            ratio_w, ratio_h = 1, 1
+        wh = (result['labels'][:, 3:5] - result['labels'][:, 1:3] ) * np.array([ratio_w, ratio_h])
         resized_wh.append(wh)
-    wh0 = torch.tensor(np.concatenate(resized_wh)).float()  # wh
+    wh0 = torch.tensor(np.concatenate(resized_wh)).float().cpu() # wh
 
     # Filter
     i = (wh0 < 3.0).any(1).sum()     #any(dim)
@@ -147,23 +167,24 @@ def kmean_anchors(dataset='./data/coco128.yaml', n=9, img_size=640, thr=4.0, gen
     s = wh.std(0)  # sigmas for whitening
     k, dist = kmeans(wh / s, n, iter=30)  # points, mean distance
     assert len(k) == n, f'{PREFIX}ERROR: scipy.cluster.vq.kmeans requested {n} points but returned only {len(k)}'
-    k *= s
-    wh = torch.tensor(wh, dtype=torch.float32)  # filtered
-    wh0 = torch.tensor(wh0, dtype=torch.float32)  # unfiltered
+    k = k * s.numpy()
+    # wh = torch.tensor(wh, dtype=torch.float32)  # filtered
+    # wh0 = torch.tensor(wh0, dtype=torch.float32)  # unfiltered
     k = print_results(k, verbose=False)
-
+    # print('kmeans down')
     # Plot
-    k, d = [None] * 20, [None] * 20
-    for i in tqdm(range(1, 21)):
-        k[i-1], d[i-1] = kmeans(wh / s, i)  # points, mean distance
-    fig, ax = plt.subplots(1, 2, figsize=(14, 7), tight_layout=True)
-    ax = ax.ravel()
-    ax[0].plot(np.arange(1, 21), np.array(d) ** 2, marker='.')
-    fig, ax = plt.subplots(1, 2, figsize=(14, 7))  # plot wh
-    ax[0].hist(wh[wh[:, 0]<100, 0],400)
-    ax[1].hist(wh[wh[:, 1]<100, 1],400)
-    fig.savefig('wh.png', dpi=200)
-
+    # print('now plot')
+    # k, d = [None] * 20, [None] * 20
+    # for i in tqdm(range(1, 21)):
+    #     k[i-1], d[i-1] = kmeans(wh / s, i)  # points, mean distance
+    # fig, ax = plt.subplots(1, 2, figsize=(14, 7), tight_layout=True)
+    # ax = ax.ravel()
+    # ax[0].plot(np.arange(1, 21), np.array(d) ** 2, marker='.')
+    # fig, ax = plt.subplots(1, 2, figsize=(14, 7))  # plot wh
+    # ax[0].hist(wh[wh[:, 0]<100, 0],400)
+    # ax[1].hist(wh[wh[:, 1]<100, 1],400)
+    # fig.savefig('wh.png', dpi=200)
+    # print('plot down')
     # Evolve
     npr = np.random
     f, sh, mp, s = anchor_fitness(k), k.shape, 0.9, 0.1  # fitness, generations, mutation prob, sigma
@@ -181,3 +202,8 @@ def kmean_anchors(dataset='./data/coco128.yaml', n=9, img_size=640, thr=4.0, gen
                 print_results(k, verbose)
 
     return print_results(k)
+
+if __name__ == '__main__':
+    dataset = 'drone.yaml'
+    anchors = kmean_anchors(dataset, n=9, img_size=640, thr=4, gen=1000, verbose=False)  # return numpy
+    print(anchors)

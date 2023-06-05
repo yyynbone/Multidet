@@ -36,7 +36,7 @@ def before_train(hyp, opt, logger):
     save_dir, epochs, batch_size, weights, single_cls, evolve, data, cfg, resume, noval, nosave, workers, freeze, = \
         Path(opt.save_dir), opt.epochs, opt.batch_size, opt.weights, opt.single_cls, opt.evolve, opt.data, opt.cfg, \
         opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze
-
+    max_stride = 4
     # Hyperparameters
     if isinstance(hyp, str):
         with open(hyp, errors='ignore') as f:
@@ -81,8 +81,9 @@ def before_train(hyp, opt, logger):
     else:
         model = Model(cfg, ch=ch_in, nc=nc, anchors=hyp.get('anchors'), logger=logger) # create
     # Image size
-    gs = int(model.stride.max()) if hasattr(model, 'stride') else 32
-    gs = max(gs, 32)  # grid size (max stride)
+    # gs = int(model.stride.max()) if hasattr(model, 'stride') else max_stride
+    # gs = max(gs, max_stride)  # grid size (max stride)
+    gs = max_stride
 
     imgsz = opt.imgsz
     if isinstance(imgsz, int):
@@ -98,7 +99,6 @@ def before_train(hyp, opt, logger):
     # Batch size
     if batch_size == -1:  # single-GPU only, estimate best batch size
         batch_size = check_train_batch_size(model, imgsz)
-
 
     # Train
     train_dataset, train_pre = get_dataset(train_path,
@@ -206,15 +206,19 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
 
     else:
         model = Model(cfg, ch=ch_in, nc=nc, anchors=hyp.get('anchors'), logger=logger).to(device)  # create
-
+    # print('model load in: ', local_rank)
     # calculate class_weight
     train_dataset = LoadImagesAndLabels(train_pre,
                                         train_data,
                                         logger=logger,
                                         bkg_ratio=getattr(opt, "bkg_ratio", 0),
-                                        obj_mask=getattr(opt, "train_obj_mask", 0)
+                                        obj_mask=getattr(opt, "train_obj_mask", 0),
+                                        sample_portion=getattr(opt, "train_sample_portion", 1)
                                         )
     train_dataset.cropped_imgsz =  getattr(opt, "train_cropped_imgsz", False)
+    train_dataset.slide_crop = getattr(opt, "slide_crop", False)
+    with torch_distributed_zero_first(local_rank):
+        train_dataset.index_shuffle(local_rank)
     if node in [-1, 0] and local_rank in [-1, 0]:
         plot_labels(train_dataset.labels, names=select_class_tuple(data_dict), save_dir=save_dir, logger=logger)
     class_weights = labels_to_class_weights(train_dataset.labels, nc)
@@ -227,6 +231,7 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
         shuffle = True
     sampler = None if opt.world_size == 1 else SuffleDist_Sample(train_dataset, shuffle=shuffle)
     # loader = DataLoader  # if opt.image_weights else InfiniteDataLoader  # only DataLoader allows for attribute updates
+    batch_size = min(batch_size, len(train_dataset))
     train_loader = SuffleLoader(train_dataset,
                           batch_size=batch_size,
                           shuffle=shuffle and sampler is None,
@@ -245,22 +250,24 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
     #     add_indices = random.choices(range(train_dataset.n), weights=iw, k=train_dataset.n)  # rand weighted idx
     #     train_dataset.indices = np.concatenate((train_dataset.indices, add_indices))
     print_log('train dataset loader done', logger)
-    # batch_size = min(batch_size, len(train_dataset))
+
     # Process 0
     if not resume and local_rank in [-1, 0]:
         # Anchors
         if not opt.noautoanchor:
-            check_anchors(train_dataset, model=model, thr=hyp['anchor_t'], logger=logger)
+            check_anchors(train_dataset, model=model, imgsz=imgsz,  thr=hyp['anchor_t'], logger=logger)
 
     # Valloader
     val_dataset = LoadImagesAndLabels(val_pre,
                                       val_data,
                                       logger=logger,
                                       bkg_ratio=0,
-                                      obj_mask=getattr(opt, "val_obj_mask", 0)
+                                      obj_mask=getattr(opt, "val_obj_mask", 0),
+                                      sample_portion=getattr(opt, "val_sample_portion", 1)
                                       )
     val_dataset.cropped_imgsz =  getattr(opt, "val_cropped_imgsz", False)
-    val_loader = DataLoader(val_dataset,
+    val_dataset.slide_crop = getattr(opt, "slide_crop", False)
+    val_loader = SuffleLoader(val_dataset,
                             batch_size=batch_size,
                             shuffle=False,
                             num_workers=workers,
@@ -364,8 +371,6 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
         # hyp['obj'] *= (max(imgsz) / 640) ** 2 * 3 / nl  # scale to image size and layers
         hyp['label_smoothing'] = opt.label_smoothing
 
-
-
     init_seeds(1 + node)
     # Optimizer
     nbs = 64  # nominal batch size
@@ -443,10 +448,6 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
 
     for epoch in range(start_epoch, epochs):  # epoch ---------------------------------------------------------
         # print('before epoch after broadcast is', broadcast_list, local_rank)
-        if epoch==0:
-            save_crop = True
-        else:
-            save_crop = False
         lr_coeft = broadcast_list[1]
         # print('before epoch after broadcast is', lr_coeft, local_rank)
         if not opt.val_first:
@@ -457,23 +458,24 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
                 iw = labels_to_image_weights(train_loader.dataset.labels, nc=model.nc, class_weights=cw)  # image weights
                 train_dataset.indices = random.choices(range(len(train_dataset)), weights=iw,
                                                        k=len(train_dataset))  # rand weighted idx
-            else:
-                train_dataset.index_shuffle(obj_repeat=1,  bg_repeat=1, iou_thres=0.4, pix_thres=8, save_crop=save_crop)
+             
             # Update mosaic border (optional)
             # b = int(random.uniform(0.25 * imgsz, 0.75 * imgsz + gs) // gs * gs)
             # dataset.mosaic_border = [b - imgsz, -b]  # height, width borders
-
-            train_loader.shuffle()
+            if  epoch%getattr(opt, 'shuffle_epoch', 100)==0:
+                print_log(f'now we shuffle index in {epoch}', logger)
+                train_loader.shuffle_index(local_rank)
             # sampler = None if opt.world_size == 1 else distributed.DistributedSampler(train_dataset, shuffle=shuffle)
             # loader = DataLoader  # if opt.image_weights else InfiniteDataLoader  # only DataLoader allows for attribute updates
             # train_loader = loader(train_dataset,
             #                       batch_size=batch_size,
             #                       shuffle=shuffle and sampler is None,
             #                       num_workers=workers,
+            #                       num_workers=workers,
             #                       sampler=sampler,
             #                       pin_memory=True,
             #                       collate_fn=LoadImagesAndLabels.collate_fn)
-
+            # print('shuffle_index load in: ', local_rank)
             if node != -1:
                 train_loader.sampler.set_epoch(epoch)
             pbar = enumerate(train_loader)
@@ -634,6 +636,9 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
                     print_log(f'now in epoch {epoch}, lr coefficient is:{lr_coeft}', logger)
 
         if node in [-1, 0] and local_rank in [-1, 0]:
+
+            val_loader.shuffle_index(-1)
+
             if opt.val_train:
                 results, _, times = val(data_dict,
                                         batch_size=batch_size,
@@ -908,7 +913,7 @@ def kd_train(opt, logger, device, train_data, train_pre, val_data, val_pre,  loc
     if not resume and local_rank in [-1, 0]:
         # Anchors
         if not opt.noautoanchor:
-            check_anchors(train_dataset, model=model, thr=hyp['anchor_t'], logger=logger)
+            check_anchors(train_dataset, model=model, imgsz=imgsz, thr=hyp['anchor_t'], logger=logger)
 
     # Valloader
     val_dataset = LoadImagesAndLabels(val_pre,
@@ -1641,9 +1646,9 @@ def val(data,
                 plot_tar = targets
                 plot_pred = output_to_target(out)
                 f = save_dir / f'val_batch{batch_i}_labels.jpg'  # labels
-                Thread(target=plot_images, args=(im, plot_tar, paths, f, names), daemon=True).start()
+                Thread(target=plot_images, args=(im, plot_tar, paths, f, names), daemon=False).start()
                 f = save_dir / f'val_batch{batch_i}_pred.jpg'  # predictions
-                Thread(target=plot_images, args=(im, plot_pred, paths, f, names), daemon=True).start()
+                Thread(target=plot_images, args=(im, plot_pred, paths, f, names), daemon=False).start()
                 # plot_images(im, plot_pred, paths, f, names)
         elif loss_num == 1:
             cls_stats.append((out.cpu(), class_label.cpu()))
@@ -1702,7 +1707,7 @@ def val(data,
 
     # Save JSON
     if save_json and len(jdict):
-        det_coco_calculate(weights, data, task, save_dir, logger, jdict, last_conf, dataloader, visual_matched)
+        det_coco_calculate(weights, data, task, save_dir, logger, jdict, last_conf, visual_matched)
 
     print_log(f"Results saved to {save_dir}", logger)
 

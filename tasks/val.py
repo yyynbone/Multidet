@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 from utils import ROOT
 from models import attempt_load
 from loss import *
-from dataloader import LoadImagesAndLabels, get_dataset
+from dataloader import LoadImagesAndLabels, get_dataset, SuffleLoader
 from tasks import val
 
 from utils import ( set_logging, check_dataset, check_yaml, load_args, increment_path, select_device, print_args,print_log, select_class_tuple)
@@ -139,17 +139,21 @@ def main(opt):
                                           task_data,
                                           logger=opt.logger,
                                           bkg_ratio=getattr(opt, "bkg_ratio", 0),
-                                          obj_mask=getattr(opt,"val_obj_mask", 0))
+                                          obj_mask=getattr(opt,"val_obj_mask", 0),
+                                          sample_portion=getattr(opt, "val_sample_portion", 1)
+                                          )
+
             dataset.cropped_imgsz = getattr(opt, "val_cropped_imgsz", False)
-            dataset.index_shuffle()
+            # dataset.index_shuffle()
             batch_size = min(opt.batch_size, len(dataset))
-            opt.dataloader = DataLoader(dataset,
+            opt.dataloader = SuffleLoader(dataset,
                           batch_size=batch_size,
                           shuffle=False,
                           num_workers=4,
                           sampler=None,
                           pin_memory=True,
                           collate_fn=LoadImagesAndLabels.collate_fn)
+            opt.dataloader.shuffle_index(-1)
 
             # run normally
 

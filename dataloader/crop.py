@@ -12,7 +12,7 @@ import random
 from tqdm import tqdm
 from datetime import datetime
 from scipy.cluster.vq import kmeans,whiten
-from .utils import mkdir,Logger, get_pic_id_map, get_box, filter_difficult
+from .data_utils import mkdir,Logger, get_pic_id_map, get_box, filter_difficult
 from threading import Thread
 
 def filter_array(arr, min, filter_pix,log=None):

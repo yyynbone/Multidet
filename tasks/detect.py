@@ -54,6 +54,7 @@ def run(weights='checkpoints/zjs_s16.pt',  # model.pt path(s)
         last_conf=0.4,
         logger=None,
         model_class=None,
+        crop_imgsz=None,
         **kwargs
         ):
 
@@ -81,7 +82,7 @@ def run(weights='checkpoints/zjs_s16.pt',  # model.pt path(s)
 
         model = model.module if hasattr(model, 'module') else model
 
-    stride = int(max(model.stride)) if hasattr(model, 'stride') else 16
+    stride = 1 # int(max(model.stride)) if hasattr(model, 'stride') else 16
 
     imgsz = check_img_size(imgsz, s=stride)  # check image size
 
@@ -100,10 +101,11 @@ def run(weights='checkpoints/zjs_s16.pt',  # model.pt path(s)
         dataset = LoadStreams(source, img_size=imgsz, stride=stride, auto=False)
         bs = len(dataset)  # batch_size
     else:
-        if imgsz[0] == imgsz[1]:
-            dataset = LoadImages(source, img_size=imgsz, stride=stride, auto=False, is_bgr=is_bgr)
-        else:
-            dataset = LoadImages(source, img_size=imgsz, stride=stride, auto=False, is_bgr=is_bgr)
+        # if imgsz[0] == imgsz[1]:
+        #     dataset = LoadImages(source, img_size=imgsz, stride=stride, auto=False, is_bgr=is_bgr)
+        # else:
+        #     dataset = LoadImages(source, img_size=imgsz, stride=stride, auto=False, is_bgr=is_bgr)
+        dataset = LoadImages(source, img_size=imgsz, stride=4, auto=False, is_bgr=is_bgr, slide_crop=crop_imgsz)
         bs = 1  # batch_size
     vid_path, vid_writer = [None] * bs, [None] * bs
 
@@ -161,6 +163,7 @@ def run(weights='checkpoints/zjs_s16.pt',  # model.pt path(s)
                         save_path = str(save_dir / p.name)  # im.jpg
                         cv2.imwrite(save_path, im0)
         else:
+            pred, im = dataset.merge2big(pred, im, im0s)
             # NMS
             # pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
             pred = non_max_suppression_with_iof(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det, iof_nms=True)
@@ -210,7 +213,7 @@ def run(weights='checkpoints/zjs_s16.pt',  # model.pt path(s)
                             with open(txt_path + '.txt', 'a') as f:
                                 f.write(('%g ' * len(line)).rstrip() % line + '\n')
 
-                        if save_img or save_crop or view_img:  # Add bbox to image
+                        if save_img or view_img or save_crop : # Add bbox to image
                             c = int(cls)  # integer class
                             label = None if hide_labels else (names[c] if hide_conf else f'{names[c]} {conf:.1f}')
                             annotator.box_label(xyxy, label, color=colors(c, True))
@@ -247,7 +250,7 @@ def run(weights='checkpoints/zjs_s16.pt',  # model.pt path(s)
 
     # Print results
     t = tuple(x / seen * 1E3 for x in dt)  # speeds per image
-    print_log(f'Speed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {(1, ch_in, *imgsz)}' % t, logger)
+    print_log(f'Speed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {(1, ch_in, *im.shape[2:])}, all {seen} image ' % t, logger)
     if save_txt or save_img:
         s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
         print_log(f"Results saved to {colorstr('bold', save_dir)}{s}", logger)
@@ -257,13 +260,14 @@ def run(weights='checkpoints/zjs_s16.pt',  # model.pt path(s)
 
 def parse_opt():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default= 'checkpoints/zjs_s16.pt', help='model path(s)')
+    parser.add_argument('--weights', type=str, default= 'results/train/drone/zjdet_neck/exp2/weights/best.pt', help='model path(s)')
     parser.add_argument('--cfg', default=None, help='model yaml path(s)')
-    parser.add_argument('--source', type=str, default= 'data/images', help='file/dir/URL/glob, 0 for webcam')
-    parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[640], help='inference size h,w')
-    parser.add_argument('--conf-thres', type=float, default=0.001, help='confidence threshold')
+    parser.add_argument('--source', type=str, default= '../data/visdrone/video.mp4', help='file/dir/URL/glob, 0 for webcam')
+    parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[270, 480], help='inference size h,w')
+    parser.add_argument('--crop-imgsz', default=[540, 960], help='slide crop a big picture or not')
+    parser.add_argument('--conf-thres', type=float, default=0.25, help='confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.6, help='NMS IoU threshold')
-    parser.add_argument('--max-det', type=int, default=1000, help='maximum detections per image')
+    parser.add_argument('--max-det', type=int, default=100, help='maximum detections per image')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--view-img', action='store_true', help='show results')
     parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
@@ -284,11 +288,14 @@ def parse_opt():
     parser.add_argument('--half', action='store_true', help='use FP16 half-precision inference')
     # parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
     # parser.add_argument('--fuse', default=1, type=int, help='fuse or not')
-    parser.add_argument('--last-conf', type=float, default=0.1, help='last conf thresh after nms')
+    parser.add_argument('--last-conf', type=float, default=0.2, help='last conf thresh after nms')
     parser.add_argument('--is-bgr', default=1, type=int, help='input channel is 3 or not')
     parser.add_argument('--model-class', default=None, help='model class such as yolov5 yolov6 yolov8 etc')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
+    opt.view_img = True
+    # opt.slide_crop = True
+    # opt.device = 'cpu'
     # opt.imgsz = [960,544]
     print_args(FILE.stem, opt)
     return opt
