@@ -149,6 +149,11 @@ def get_dataset(path, pre_process, img_size=640, batch_size=16, logger=None, ima
     results[0]['select_class'] = select_class
     return results, pre_process
 
+def filter_pix(labels,pix_area):
+    if pix_area is not None:
+        new_wh = xyxy2xywh(labels[:, 1:5])[:, 2:]
+        labels = labels[np.all(np.concatenate([new_wh>pix_area[0], new_wh<pix_area[1]], axis=-1), axis=-1)].reshape(-1, 5)
+    return labels
 
 class LoadImagesAndLabels(Dataset):
     #  loads images and labels for training and validation
@@ -263,7 +268,7 @@ class LoadImagesAndLabels(Dataset):
         self.bkg_ratio = bkg_ratio
     """
     def __init__(self, pre_process, results, logger=None, bkg_ratio=0, obj_mask=0, cropped_imgsz=False,
-                 obj_repeat=1, bg_repeat=1, iou_thres=0.4, pix_thres=8, slide_crop=False, sample_portion=1):
+                 obj_repeat=1, bg_repeat=1, iou_thres=0.4, pix_thres=1, slide_crop=False, sample_portion=1, pix_area=None):
 
         self.mask_labels = pre_process.get('mask_label', False)
         self.mosaic = pre_process.get('mosaic', 0)
@@ -273,7 +278,10 @@ class LoadImagesAndLabels(Dataset):
         self.p = Path(results[0]['filename']).parents[1]
         self.select_class = results[0]['select_class']
 
+
         if pre_process.get('label', False):
+            for result in results:
+                result['labels'] = filter_pix(result['labels'], pix_area)
             self.labels = [result['labels'] for result in results]
             label_num = np.array([len(l) for l in self.labels])
             self.obj_index = np.where(label_num > 0)[0]
@@ -302,6 +310,8 @@ class LoadImagesAndLabels(Dataset):
         self.pix_thres = pix_thres
         self.slide_crop = slide_crop
         self.portion = sample_portion
+        self.pix_area = pix_area
+
 
     def format(self, result):
         trans_result = deepcopy(result)
@@ -340,7 +350,7 @@ class LoadImagesAndLabels(Dataset):
         # self.select_result = self.origin_results[]
         if self.cropped_imgsz:
             slide_crop = self.slide_crop
-            crop_dir = 'slide_crop' if slide_crop else 'center_crop'
+            crop_dir = f'slide_crop_{self.cropped_imgsz[1]}_{self.cropped_imgsz[0]}' if slide_crop else f'center_crop_{self.cropped_imgsz[1]}_{self.cropped_imgsz[0]}'
             path = str(self.p / crop_dir)
             if rank in [-1, 0]:
                 crop_flag = 1

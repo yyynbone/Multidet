@@ -140,7 +140,8 @@ def main(opt):
                                           logger=opt.logger,
                                           bkg_ratio=getattr(opt, "bkg_ratio", 0),
                                           obj_mask=getattr(opt,"val_obj_mask", 0),
-                                          sample_portion=getattr(opt, "val_sample_portion", 1)
+                                          sample_portion=getattr(opt, "val_sample_portion", 1),
+                                          pix_area=getattr(opt, 'pix_area', None)
                                           )
 
             dataset.cropped_imgsz = getattr(opt, "val_cropped_imgsz", False)

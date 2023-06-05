@@ -36,7 +36,7 @@ def before_train(hyp, opt, logger):
     save_dir, epochs, batch_size, weights, single_cls, evolve, data, cfg, resume, noval, nosave, workers, freeze, = \
         Path(opt.save_dir), opt.epochs, opt.batch_size, opt.weights, opt.single_cls, opt.evolve, opt.data, opt.cfg, \
         opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze
-    max_stride = 4
+    max_stride = 2
     # Hyperparameters
     if isinstance(hyp, str):
         with open(hyp, errors='ignore') as f:
@@ -213,7 +213,8 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
                                         logger=logger,
                                         bkg_ratio=getattr(opt, "bkg_ratio", 0),
                                         obj_mask=getattr(opt, "train_obj_mask", 0),
-                                        sample_portion=getattr(opt, "train_sample_portion", 1)
+                                        sample_portion=getattr(opt, "train_sample_portion", 1),
+                                        pix_area=getattr(opt, 'pix_area', None)
                                         )
     train_dataset.cropped_imgsz =  getattr(opt, "train_cropped_imgsz", False)
     train_dataset.slide_crop = getattr(opt, "slide_crop", False)
@@ -263,7 +264,8 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
                                       logger=logger,
                                       bkg_ratio=0,
                                       obj_mask=getattr(opt, "val_obj_mask", 0),
-                                      sample_portion=getattr(opt, "val_sample_portion", 1)
+                                      sample_portion=getattr(opt, "val_sample_portion", 1),
+                                      pix_area=getattr(opt, 'pix_area', None)
                                       )
     val_dataset.cropped_imgsz =  getattr(opt, "val_cropped_imgsz", False)
     val_dataset.slide_crop = getattr(opt, "slide_crop", False)

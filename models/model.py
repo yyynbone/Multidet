@@ -399,7 +399,7 @@ if __name__ == '__main__':
     FILE = Path(__file__).resolve()
     ROOT = FILE.parents[1]
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/zjdet_neck.yaml', help='model.yaml')
+    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/zjdet_small_only.yaml', help='model.yaml')
     parser.add_argument('--device', default='0', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--profile', default=True, help='profile model speed')
     parser.add_argument('--test', action='store_true', help='test all yolo*.yaml')
