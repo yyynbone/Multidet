@@ -3,7 +3,7 @@ cfg: zjdet_unet.yaml
 
 data: drone.yaml
 data_prefile: data_preprocess_false.yaml
-hyp: hyp_v8.yaml
+hyp: hyp.yaml
 batch_size: 4 # for 640*640 64
 bgr: 1
 last_conf: 0.3
@@ -20,7 +20,7 @@ epochs: 500
 patience: 300
 rect: false
 world_size: 8
-loss: LossV8
+loss: LossV5
 loss_supervision: 100
 
 
