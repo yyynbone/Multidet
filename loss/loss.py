@@ -4,6 +4,124 @@ import torch.nn.functional as F
 from utils import bbox_iou,  is_parallel, nancheck, infcheck, smooth_BCE, build_targets, TaskAlignedAssigner, dist2bbox, make_anchors, bbox2dist, xywh2xyxy, print_log
 from loss.basic_loss import FocalLoss, CrossEntropyLoss
 
+# class LossV5:
+#     # Lossv5 losses
+#     def __init__(self, model, autobalance=False, logger=None):
+#         self.logger=logger
+#         self.sort_obj_iou = False
+#         device = next(model.parameters()).device  # get model device
+#         h = model.hyp  # hyperparameters
+#
+#         # Define criteria
+#         # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>  modify
+#         self.hyp = h
+#         no_dist_model = model.module if is_parallel(model) else model
+#         self.freeze = getattr(no_dist_model, "freeze", None)
+#
+#         self.det_loss = True
+#         if self.freeze:
+#             if any(str(no_dist_model.head_from) in x for x in self.freeze): # det and encoder is freeze
+#                 self.det_loss = False
+#
+#         # class loss criteria
+#         self.use_CE = h.get('CE', False)
+#         if self.det_loss:
+#             if not self.use_CE:
+#                 BCEcls = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['cls_pw']]).to(device))
+#             else:
+#                 BCEcls = CrossEntropyLoss(class_weight=h['cls_weight']).to(device)
+#             BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['obj_pw']], device=device))
+#
+#             self.cp, self.cn = smooth_BCE(eps=h.get('label_smoothing', 0.0))  # positive, negative BCE targets
+#
+#             # Focal loss
+#             g = h['fl_gamma']  # focal loss gamma
+#             if g > 0:
+#                 BCEobj = FocalLoss(BCEobj, g)
+#                 if not self.use_CE:
+#                     BCEcls = FocalLoss(BCEcls, g)
+#
+#             det = no_dist_model.model[no_dist_model.det_head_idx]  # Detect() module
+#
+#             self.balance = {3: [4.0, 1.0, 0.4]}.get(det.nl, [4.0, 1.0, 0.25, 0.06, 0.02])  # P3-P7
+#             self.balance =  h.get('obj_level_weight', self.balance)
+#             self.ssi = list(det.stride).index(16) if autobalance else 0  # stride 16 index
+#
+#             self.BCEcls, self.BCEobj, self.gr, self.autobalance = BCEcls, BCEobj, 1.0, autobalance
+#             for k in 'nc', 'anchors':
+#                 setattr(self, k, getattr(det, k))
+#             self.loss_num = 3
+#
+#     def __call__(self, p, targets):  # predictions, targets, model
+#         if isinstance(targets, (list, tuple)):
+#             class_label, targets, seg_img = targets
+#         device = targets.device
+#         lcls, lbox, lobj = torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device)
+#         cls_ls, iou_ls = torch.zeros(1, device=device), torch.zeros(1, device=device)
+#         if self.det_loss:
+#             tcls, tbox, indices, anchors = build_targets(p, targets, self.anchors, self.hyp['anchor_t'],)  # targets
+#             # Losses
+#             for i, pi in enumerate(p):  # layer index, layer predictions
+#                 b, a, gj, gi = indices[i]  # image, anchor, gridy, gridx
+#                 tobj = torch.zeros_like(pi[..., 0], device=device)  # target obj
+#
+#                 n = b.shape[0]  # number of targets
+#                 if n:
+#                     ps = pi[b, a, gj, gi]  # prediction subset corresponding to targets
+#
+#                     # Regression
+#                     pxy = ps[:, :2].sigmoid() * 2 - 0.5
+#                     pwh = (ps[:, 2:4].sigmoid() * 2) ** 2 * anchors[i]
+#                     pbox = torch.cat((pxy, pwh), 1)  # predicted box
+#                     iou = bbox_iou(pbox.T, tbox[i], x1y1x2y2=False, CIoU=True)  # iou(prediction, target)
+#                     iou_ls = (1.0 - iou).mean()  # iou loss
+#                     lbox += iou_ls
+#
+#                     # Objectness
+#                     score_iou = iou.detach().clamp(0).type(tobj.dtype)
+#                     if self.sort_obj_iou:
+#                         sort_id = torch.argsort(score_iou)
+#                         b, a, gj, gi, score_iou = b[sort_id], a[sort_id], gj[sort_id], gi[sort_id], score_iou[sort_id]
+#                     tobj[b, a, gj, gi] = (1.0 - self.gr) + self.gr * score_iou  # iou ratio
+#
+#                     if self.nc > 1:  # cls loss (only if multiple classes)
+#                         if not self.use_CE:
+#                             t = torch.full_like(ps[:, 5:], self.cn, device=device)  # targets
+#                             t[range(n), tcls[i]] = self.cp
+#                             cls_ls = self.BCEcls(ps[:, 5:], t)
+#
+#                             # # BCE   RuntimeError: Expected object of scalar type Long but got scalar type Float
+#                             # # for argument #2 'target' in call to _thnn_nll_loss_forward
+#                             # lcls += BCEcls(ps[:, 5:], t.long())  # BCE
+#                         else:
+#                             cls_ls = self.BCEcls(ps[:, 5:], tcls[i])  # Cross Entropy
+#                         lcls += cls_ls
+#
+#
+#
+#                 obj_ls= self.BCEobj(pi[..., 4], tobj)
+#                 if obj_ls > 2:
+#                     print_log(f"now in level {i} object loss bigger, which may cause erupt", self.logger)
+#                 if nancheck([cls_ls, iou_ls, obj_ls]) or infcheck([cls_ls, iou_ls, obj_ls]):
+#                     print_log(f"warning now in level {i},  we found a nan or inf in loss {[cls_ls, iou_ls, obj_ls]}", self.logger)
+#
+#                 lobj += obj_ls * self.balance[i]  # obj loss
+#                 if self.autobalance:
+#                     self.balance[i] = self.balance[i] * 0.9999 + 0.0001 / obj_ls.detach().item()
+#
+#             if self.autobalance:
+#                 self.balance = [x / self.balance[self.ssi] for x in self.balance]
+#             # print(lbox, lobj, lcls)
+#             lbox *= self.hyp['box'] #
+#             lobj *= self.hyp['obj'] # score
+#             lcls *= self.hyp['cls'] # class
+#             bs = tobj.shape[0]  # batch size
+#             # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>  modify
+#         else:
+#             bs = p.shape[0]
+#         return (lbox + lobj + lcls) * bs, torch.cat((lbox, lobj, lcls)).detach()
+#
+
 class LossV5:
     # Lossv5 losses
     def __init__(self, model, autobalance=False, logger=None):
@@ -43,8 +161,12 @@ class LossV5:
 
             det = no_dist_model.model[no_dist_model.det_head_idx]  # Detect() module
 
-            self.balance = {3: [4.0, 1.0, 0.4]}.get(det.nl, [4.0, 1.0, 0.25, 0.06, 0.02])  # P3-P7
-            self.balance =  h.get('obj_level_weight', self.balance)
+            self.obj_balance = {3: [4.0, 1.0, 0.4]}.get(det.nl, [4.0, 1.0, 0.25, 0.06, 0.02])  # P3-P7
+            self.obj_balance =  h.get('obj_level_weight', self.obj_balance)
+            self.cls_balance = h.get('cls_level_weight', [1., 1., 1.])
+            self.box_balance = h.get('box_level_weight', [1., 1., 1.])
+            print_log(f"cls box and obj balance is {self.cls_balance}, {self.box_balance}, {self.obj_balance}",
+                      logger)
             self.ssi = list(det.stride).index(16) if autobalance else 0  # stride 16 index
 
             self.BCEcls, self.BCEobj, self.gr, self.autobalance = BCEcls, BCEobj, 1.0, autobalance
@@ -57,6 +179,7 @@ class LossV5:
             class_label, targets, seg_img = targets
         device = targets.device
         lcls, lbox, lobj = torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device)
+        llcls, llbox, llobj = [], [], []
         cls_ls, iou_ls = torch.zeros(1, device=device), torch.zeros(1, device=device)
         if self.det_loss:
             tcls, tbox, indices, anchors = build_targets(p, targets, self.anchors, self.hyp['anchor_t'],)  # targets
@@ -75,7 +198,7 @@ class LossV5:
                     pbox = torch.cat((pxy, pwh), 1)  # predicted box
                     iou = bbox_iou(pbox.T, tbox[i], x1y1x2y2=False, CIoU=True)  # iou(prediction, target)
                     iou_ls = (1.0 - iou).mean()  # iou loss
-                    lbox += iou_ls
+                    llbox.append(iou_ls)
 
                     # Objectness
                     score_iou = iou.detach().clamp(0).type(tobj.dtype)
@@ -95,25 +218,29 @@ class LossV5:
                             # lcls += BCEcls(ps[:, 5:], t.long())  # BCE
                         else:
                             cls_ls = self.BCEcls(ps[:, 5:], tcls[i])  # Cross Entropy
-                        lcls += cls_ls
+                        llcls.append(cls_ls)
 
 
 
-                obj_ls= self.BCEobj(pi[..., 4], tobj)
+                obj_ls = self.BCEobj(pi[..., 4], tobj)
                 if obj_ls > 2:
                     print_log(f"now in level {i} object loss bigger, which may cause erupt", self.logger)
                 if nancheck([cls_ls, iou_ls, obj_ls]) or infcheck([cls_ls, iou_ls, obj_ls]):
                     print_log(f"warning now in level {i},  we found a nan or inf in loss {[cls_ls, iou_ls, obj_ls]}", self.logger)
 
-                lobj += obj_ls * self.balance[i]  # obj loss
+                llobj.append(obj_ls * self.obj_balance[i])  # obj loss
                 if self.autobalance:
-                    self.balance[i] = self.balance[i] * 0.9999 + 0.0001 / obj_ls.detach().item()
+                    self.obj_balance[i] = self.obj_balance[i] * 0.9999 + 0.0001 / obj_ls.detach().item()
 
             if self.autobalance:
-                self.balance = [x / self.balance[self.ssi] for x in self.balance]
-            lbox *= self.hyp['box'] #
-            lobj *= self.hyp['obj'] # score
-            lcls *= self.hyp['cls'] # class
+                self.obj_balance = [x / self.obj_balance[self.ssi] for x in self.obj_balance]
+
+            # print(llcls, llbox, llobj)
+
+            lbox[0] = sum([l*w for l, w in zip(llbox, self.box_balance)]) * self.hyp['box']  #
+            lobj[0] = sum(llobj) * self.hyp['obj'] # score
+            lcls[0] = sum([l*w for l, w in zip(llcls, self.cls_balance)])* self.hyp['cls'] # class # is a constant not an array
+            # print(lbox, lobj, lcls)
             bs = tobj.shape[0]  # batch size
             # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>  modify
         else:

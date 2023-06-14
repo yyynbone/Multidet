@@ -635,59 +635,94 @@ def det_coco_calculate(weights, data, task, save_dir, logger, jdict, last_conf, 
 
     convert_small2big_json(jdict)
     ######### for Imageid  of filename 2 Imageid ################
-    try:
-        anno_json = str(Path(data['coco']))
-        with open(anno_json, 'r') as f:
-            images = json.load(f)['images']
-        image_file_id = {}
-        for img_info in images:
-            file_name_no_suffix = img_info['file_name'].split('.')[0]
-            image_file_id[file_name_no_suffix] = [img_info['file_name'], img_info['id']]
-        for pic_info in jdict:
-            pic_info['image_name'], pic_info['image_id'] = image_file_id[pic_info['image_name']]
-    except Exception as e:
-        print_log(f'open anno file ERROR: {e}', logger)
+    if is_coco:
+        try:
+            anno_json = str(Path(data['coco']))
+            with open(anno_json, 'r') as f:
+                images = json.load(f)['images']
+            image_file_id = {}
+            for img_info in images:
+                file_name_no_suffix = img_info['file_name'].split('.')[0]
+                image_file_id[file_name_no_suffix] = [img_info['file_name'], img_info['id']]
+            for pic_info in jdict:
+                pic_info['image_name'], pic_info['image_id'] = image_file_id[pic_info['image_name']]
+        except Exception as e:
+            print_log(f'open anno file ERROR: {e}', logger)
 
     with open(pred_json, 'w') as f:
         json.dump(jdict, f, indent=4)
+    if is_coco:
+        print_log(f'\nEvaluating pycocotools mAP... saving {pred_json}...', logger)
 
-    print_log(f'\nEvaluating pycocotools mAP... saving {pred_json}...', logger)
+        try:  # https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocoEvalDemo.ipynb
+            from pycocotools.coco import COCO
+            from pycocotools.cocoeval import COCOeval
 
-    try:  # https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocoEvalDemo.ipynb
-        from pycocotools.coco import COCO
-        from pycocotools.cocoeval import COCOeval
+            anno = COCO(anno_json)  # init annotations api
 
-        anno = COCO(anno_json)  # init annotations api
+            pred_json_c = select_score_from_json(pred_json, score_thresh=0.1)
 
-        pred_json_c = select_score_from_json(pred_json, score_thresh=0.1)
+            pred = anno.loadRes(pred_json_c)  # init predictions api
+            eval = COCOeval(anno, pred, 'bbox')
+            eval.params.maxDets = [10, 300, 5000]
+            eval.params.iouThrs = np.linspace(.05, 0.95, int(np.round((0.95 - .05) / .1)) + 1, endpoint=True)
+            # if is_coco:
+            #     eval.params.imgIds = [int(Path(x).stem) for x in dataloader.dataset.img_files]  # image IDs to evaluate
+            eval.evaluate()
+            eval.accumulate()
+            eval.summarize()
 
-        pred = anno.loadRes(pred_json_c)  # init predictions api
-        eval = COCOeval(anno, pred, 'bbox')
-        eval.params.maxDets = [10, 300, 5000]
-        eval.params.iouThrs = np.linspace(.05, 0.95, int(np.round((0.95 - .05) / .1)) + 1, endpoint=True)
-        # if is_coco:
-        #     eval.params.imgIds = [int(Path(x).stem) for x in dataloader.dataset.img_files]  # image IDs to evaluate
-        eval.evaluate()
-        eval.accumulate()
-        eval.summarize()
-        map, map50 = eval.stats[:2]  # update results (mAP@0.5:0.95, mAP@0.5)
+            def eval_summarize(eval, ap=1, iouThr=None, areaRng='all', maxDets=100):
+                p = eval.params
+                iStr = ' {:<18} {} @[ IoU={:<9} | area={:>6s} | maxDets={:>3d} ] = {:0.3f}'
+                titleStr = 'Average Precision' if ap == 1 else 'Average Recall'
+                typeStr = '(AP)' if ap == 1 else '(AR)'
+                iouStr = '{:0.2f}:{:0.2f}'.format(p.iouThrs[0], p.iouThrs[-1]) \
+                    if iouThr is None else '{:0.2f}'.format(iouThr)
 
-        # with open(data[task], 'r') as f:
-        #     img0 = f.readline()
-        # img_prefix = os.path.split(img0)[0]
-        img_prefix = str(data[task])
+                aind = [i for i, aRng in enumerate(p.areaRngLbl) if aRng == areaRng]
+                mind = [i for i, mDet in enumerate(p.maxDets) if mDet == maxDets]
+                if ap == 1:
+                    # dimension of precision: [TxRxKxAxM]
+                    s = eval.eval['precision']
+                    # IoU
+                    if iouThr is not None:
+                        t = np.where(iouThr == p.iouThrs)[0]
+                        s = s[t]
+                    s = s[:, :, :, aind, mind]
+                else:
+                    # dimension of recall: [TxKxAxM]
+                    s = eval.eval['recall']
+                    if iouThr is not None:
+                        t = np.where(iouThr == p.iouThrs)[0]
+                        s = s[t]
+                    s = s[:, :, aind, mind]
+                if len(s[s > -1]) == 0:
+                    mean_s = -1
+                else:
+                    mean_s = np.mean(s[s > -1])
+                print(iStr.format(titleStr, typeStr, iouStr, areaRng, maxDets, mean_s))
+                return mean_s
+            eval_summarize(eval, 1, iouThr=.2, maxDets=eval.params.maxDets[2])
+            eval_summarize(eval, 0, iouThr=.2, maxDets=eval.params.maxDets[2])
+            map, map50 = eval.stats[:2]  # update results (mAP@0.5:0.95, mAP@0.5)
 
-        for conf_t in last_conf:
-            print_log(
-                f"##########################\nnow we collect and visual result with iou thresh of "
-                f"{eval.params.iouThrs[0]} and conf thresh of {conf_t} in origin", logger=logger)
+            # with open(data[task], 'r') as f:
+            #     img0 = f.readline()
+            # img_prefix = os.path.split(img0)[0]
+            img_prefix = str(data[task])
 
-            visual_return(eval, anno, save_dir, img_prefix, class_area=None, score_thresh=conf_t,
-                          logger=logger, save_visual=visual_matched)
-            visual_matched = False
+            for conf_t in last_conf:
+                print_log(
+                    f"##########################\nnow we collect and visual result with iou thresh of "
+                    f"{eval.params.iouThrs[0]} and conf thresh of {conf_t} in origin", logger=logger)
 
-    except Exception as e:
-        print_log(f'pycocotools unable to run: {e}', logger)
+                visual_return(eval, anno, save_dir, img_prefix, class_area=None, score_thresh=conf_t,
+                              logger=logger, save_visual=visual_matched)
+                visual_matched = False
+
+        except Exception as e:
+            print_log(f'pycocotools unable to run: {e}', logger)
         
 def det_calculate(stats, div_area, nc, last_conf, save_dir, names, plots,verbose, logger):
     s = ('%20s' + '%11s' * 7) % ('Class', 'Labels', 'R_num', 'P_num', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
@@ -705,15 +740,24 @@ def det_calculate(stats, div_area, nc, last_conf, save_dir, names, plots,verbose
         mp, mr = all_tp / max(all_p, 1e-16), all_tp / max(all_t, 1e-16)
         map50, map = ap50[:, 0].mean(), ap[:, 0].mean()
         print_log(pf % (f'all_conf_{conf_t}', all_t, all_tp, all_p, mp, mr, map50, map), logger)
-        if div_area is not None:
-            f_t, f_tp, f_p = area_filter(nt), area_filter(pred_truth), area_filter(lev_np)
-            f_map50, f_map = area_filter(ap50), area_filter(ap)
+        if isinstance(div_area, (list, tuple)):
+            for div_i, div_ang in enumerate(div_area):
+                f_t, f_tp, f_p = nt[..., div_i+1], pred_truth[..., div_i+1], lev_np[..., div_i+1]
+                f_map50, f_map = ap50[..., div_i+1], ap[..., div_i+1]
+                f_map50 = (f_map50 * f_p).sum() / max(f_p.sum(), 1e-16)
+                f_map = (f_map * f_p).sum() / max(f_p.sum(), 1e-16)
+                f_t, f_tp, f_p = f_t.sum(), f_tp.sum(), f_p.sum()
+                f_mp, f_mr = f_tp / max(f_p, 1e-16), f_tp / max(f_t, 1e-16)
+                print_log(pf % (f'all_under_{div_area[div_i]}', f_t, f_tp, f_p, f_mp, f_mr, f_map50, f_map), logger)
+
+            f_t, f_tp, f_p = area_filter(nt, -1), area_filter(pred_truth, -1), area_filter(lev_np, -1)
+            f_map50, f_map = area_filter(ap50, -1), area_filter(ap, -1)
             f_map50 = (f_map50 * f_p).sum() / max(f_p.sum(), 1e-16)
             f_map = (f_map * f_p).sum() / max(f_p.sum(), 1e-16)
             f_t, f_tp, f_p = f_t.sum(), f_tp.sum(), f_p.sum()
             f_mp, f_mr = f_tp / max(f_p, 1e-16), f_tp / max(f_t, 1e-16)
-            print_log(pf % (f'all_over_{div_area[0]}', f_t, f_tp, f_p, f_mp, f_mr, f_map50, f_map), logger)
-
+            print_log(pf % (f'all_over_{div_area[-1]}', f_t, f_tp, f_p, f_mp, f_mr, f_map50, f_map), logger)
+        print_log("-  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -", logger)
         # Print results per class
         if verbose and nc > 1 and len(stats):
             for i, c in enumerate(ap_class):
@@ -728,20 +772,27 @@ def det_calculate(stats, div_area, nc, last_conf, save_dir, names, plots,verbose
                         print_log(pf % (
                             f'{names[c]}_over_{div_ang}', nt[i, -1], pred_truth[i, -1], lev_np[i, -1],
                             p[i, -1], r[i, -1], ap50[i, -1], ap[i, -1]), logger)
+
+    print_log("###---------------------------------------------------------###", logger)
     return mp, mr, map50, map, ap, ap_class, p, r
 
 def convert_small2big_json(jdict):
     for pic_info in jdict:
-        file_name_split = pic_info['image_name'].split('_')
-        if len(file_name_split) > 4:
-            try:
-                xxyy = file_name_split[-4:]
-                big_f_name = '_'.join(file_name_split[:-4])
-                x_bias, y_bias = int(xxyy[0]), int(xxyy[2])
-                box = pic_info['bbox']
-                box[0] += x_bias
-                box[1] += y_bias
-                pic_info['small_image_name'] = pic_info['image_name']
-                pic_info['image_name'] = big_f_name
-            except Exception as e:
-                print('convert_small2big error', e)
+        file_name_split = pic_info['image_name'].split('-')
+        if len(file_name_split) > 1:
+            xxyy = file_name_split[-1].split("_")
+            big_f_name = '-'.join(file_name_split[:-1])
+        else:
+            file_name_split = pic_info['image_name'].split('_')
+            xxyy = file_name_split[-4:]
+            big_f_name = '_'.join(file_name_split[:-4])
+
+        try:
+            x_bias, y_bias = int(xxyy[0]), int(xxyy[2])
+            box = pic_info['bbox']
+            box[0] += x_bias
+            box[1] += y_bias
+            pic_info['small_image_name'] = pic_info['image_name']
+            pic_info['image_name'] = big_f_name
+        except Exception as e:
+            print('convert_small2big error', e)

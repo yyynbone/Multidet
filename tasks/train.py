@@ -26,6 +26,8 @@ def parse_opt(known=False):
     parser.add_argument('--data', type=str, default=ROOT / 'configs/data/dota_eo_merged.yaml', help='dataset.yaml path')
     parser.add_argument('--data-prefile', type=str, default=ROOT / 'configs/preprocess/data_preprocess.yaml',
                         help='data preprocess.yaml path')
+    parser.add_argument('--teacher', type=str, default='', help='teacher weight')
+
     parser.add_argument('--hyp', type=str, default=ROOT / 'configs/hyp/hyp.yaml', help='hyperparameters path')
     parser.add_argument('--epochs', type=int, default=300)
     parser.add_argument('--batch-size', type=int, default=16, help='total batch size for all GPUs, -1 for autobatch')
@@ -65,7 +67,7 @@ def parse_opt(known=False):
     parser.add_argument('--ignore-bkg', action='store_true', help='filter and image of background')
     parser.add_argument('--train-val-filter', action='store_true', help='filter first use the classify head')
     parser.add_argument('--val-train', action='store_true', help='valuate the train dataset')
-    parser.add_argument('--shuffle-epoch', type=int, default=50, help='shuffle crop dataset')
+    parser.add_argument('--shuffle-epoch', type=int, default=1000, help='shuffle crop dataset')
 
     parser.add_argument('--local_rank', type=int, default=-1, help='DDP parameter, do not modify')
     parser.add_argument('--node', type=int, default=0, help='computer node')
@@ -129,7 +131,7 @@ def main(local_rank, local_size, opt, train_data, train_preprocess, val_data, va
 
     if node != -1:
         assert torch.cuda.device_count() > local_rank, 'insufficient CUDA devices for DDP command'
-        assert opt.batch_size % world_size == 0, '--batch-size must be multiple of CUDA device count'
+        # assert opt.batch_size % world_size == 0, '--batch-size must be multiple of CUDA device count'
         # assert not opt.image_weights, '--image-weights argument is not compatible with DDP training'
         assert not opt.evolve, '--evolve argument is not compatible with DDP training'
         torch.cuda.set_device(local_rank)

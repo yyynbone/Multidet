@@ -124,7 +124,7 @@ def load_image(img_f, img_size=(640,640)):
         result['instance_segments'] = None
         return result
 
-def load_images(img_paths, img_size=(640,640)):
+def load_results(img_paths, img_size=(640,640)):
     if len(img_paths)>20:
         results = []
         with futures.ThreadPoolExecutor(NUM_THREADS) as executor:

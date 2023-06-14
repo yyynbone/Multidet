@@ -1,0 +1,17 @@
+train:
+  label: True
+  rect: False
+  augment: False
+  transform:
+    resize:
+    adapt_pad:
+      auto: False
+
+val:
+  label: True
+  rect: False
+  augment: False
+  transform:
+    resize:
+    adapt_pad:
+      auto: False

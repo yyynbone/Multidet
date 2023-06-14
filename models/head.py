@@ -286,7 +286,7 @@ class YOLOv8Detect(nn.Module):
     def forward(self, x):
         shape = x[0].shape  # BCHW
         for i in range(self.nl):
-            x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1)
+            x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1)  # (bs, 64, y, x) + (bs, nc, y, x)
         if self.training:
             return x
         elif self.dynamic or self.shape != shape:

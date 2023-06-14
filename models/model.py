@@ -22,14 +22,14 @@ det_head = (Detect, YOLOv8Detect, IDetect)
 cls_head = (Classify, YOLOv8Classify, SqueezenetClassify, ObjClassify, Flatten)
 def parse_model(d, ch_in, logger=LOGGER):  # model_dict, input_channels(3)
     print_log(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}", logger)
-    anchors, nc, gd, gw = d.get('anchors', []), d['nc'], d['depth_multiple'], d['width_multiple']
+    anchors, nc, gd, gw = d.get('anchors', []), d['nc'], d.get('depth_multiple', 1), d.get('width_multiple', 1)
     backbone, head = d['backbone'], d['head']
     neck = d.get('neck', [])
     filter =  d.get('filter', [])
     neck_from = len(filter) + len(backbone)
     head_from = len(neck) + neck_from
-    depth_layer = d['depth_layer']
-    width_layer = d['width_layer']
+    depth_layer = d.get('depth_layer', [])
+    width_layer = d.get('width_layer', [])
 
     layers, save = [],  []  # layers, savelist
 
@@ -41,27 +41,32 @@ def parse_model(d, ch_in, logger=LOGGER):  # model_dict, input_channels(3)
                 pass
 
         if m in width_layer:
-            if i < head_from:
-                if i == 0 or f == 'input':
-                    args.insert(0, ch_in)
-                    args[1] = make_divisible(args[1] * gw, 8)
-                elif 'class' in m.lower():
-                    args[0] = make_divisible(args[0] * gw, 8)
-                else:
-                    channel_in, channel_out = args[0], args[1]
-                    if isinstance(channel_in, list):
-                        args[0] = 0
-                        for cha_in in channel_in:
-                            args[0]+= make_divisible(cha_in * gw, 8)
-                    else:
-                        args[0] = make_divisible(channel_in * gw, 8)
-                    args[1] = make_divisible(channel_out * gw, 8)
-            else:
+
+            if i == 0 or f == 'input':
+                args.insert(0, ch_in)
+                args[1] = make_divisible(args[1] * gw, 8)
+            elif m in [str(task) for task in (*cls_head, *det_head)]:
                 if isinstance(args[0], int):
                     args[0] = make_divisible(args[0] * gw, 8)
                 else:
                     for ch_i, head_out_channel in enumerate(args[0]):
-                        args[0][ch_i] =  make_divisible(head_out_channel * gw, 8)
+                        args[0][ch_i] = make_divisible(head_out_channel * gw, 8)
+            else:
+                # channel_in, channel_out = args[0], args[1]
+                # if isinstance(channel_in, list):
+                #     args[0] = 0
+                #     for cha_in in channel_in:
+                #         args[0]+= make_divisible(cha_in * gw, 8)
+                # else:
+                #     args[0] = make_divisible(channel_in * gw, 8)
+                # args[1] = make_divisible(channel_out * gw, 8)
+                channel_in, channel_out = args[0], args[1]
+                if isinstance(channel_in, list):
+                    for ch_i, cha_in in enumerate(args[0]):
+                        args[0][ch_i]= make_divisible(cha_in * gw, 8)
+                else:
+                    args[0] = make_divisible(args[0] * gw, 8)
+                args[1] = make_divisible(args[1] * gw, 8)
 
         if m in depth_layer:
             n = args[2]
@@ -144,7 +149,7 @@ class Model(nn.Module):
         # Define model
         ch = self.yaml['ch_input'] = self.yaml.get('ch_input', ch)  # input channels
         self.nc = self.yaml['nc'] = nc # self.yaml.get('nc', nc)
-        if anchors:
+        if anchors and self.yaml.get('anchors'):
             print_log(f'Overriding model.yaml anchors with anchors={anchors}', self.logger)
             self.yaml['anchors'] = round(anchors)  # override yaml value
         self.model, self.save, (self.neck_from, self.head_from) = parse_model(deepcopy(self.yaml), ch, logger=logger)  # model, savelist
@@ -321,9 +326,9 @@ class Model(nn.Module):
 
         o = thop.profile(m, inputs=(x.copy() if c else x,), verbose=False)[0] / 1E9 * 2 if thop else 0  # FLOPs
         t = time_sync()
-        for _ in range(100):
+        for _ in range(10):
             m(x.copy() if c else x)
-        dt.append((time_sync() - t) * 10) # so here we no need to plus 1000
+        dt.append((time_sync() - t) * 100) # so here we no need to plus 1000
         thops.append(o)
         params.append(m.np)
         if m == self.model[0]:
@@ -399,7 +404,7 @@ if __name__ == '__main__':
     FILE = Path(__file__).resolve()
     ROOT = FILE.parents[1]
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/zjdet_small_only.yaml', help='model.yaml')
+    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/zjdet_unet.yaml', help='model.yaml')
     parser.add_argument('--device', default='0', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--profile', default=True, help='profile model speed')
     parser.add_argument('--test', action='store_true', help='test all yolo*.yaml')
@@ -409,36 +414,40 @@ if __name__ == '__main__':
     print_args(FILE.stem, opt)
     device = select_device(opt.device)
     ch_in = 3
-    nc = 5
-    input_shape = (ch_in, 540, 960)
+    nc = 4
+    input_shape = (ch_in, 544, 960)
     # Create model
     if check_yaml(opt.cfg):
         model = Model(opt.cfg, ch=ch_in, nc=nc, imgsz=(640, 640)).to(device)
-        model.train()
+        model.eval()
     else:
         weight = ROOT/ 'checkpoints/squeezenet.pt'
         model = attempt_load(weight, map_location=device, ch=ch_in, nc=1)
 
 
-    # Profile
-    if opt.profile:
-        # img = torch.rand(32 if torch.cuda.is_available() else 1, ch_in, 320, 320).to(device)
-        img = torch.rand(1, *(input_shape)).to(device)
-        y = model(img, profile=True)
-
-    # Test all models
-    if opt.test:
-        for cfg in Path(ROOT / 'models').rglob('yolo*.yaml'):
-            try:
-                _ = Model(cfg)
-            except Exception as e:
-                print(f'Error in {cfg}: {e}')
+    # # Profile
+    # if opt.profile:
+    #     # img = torch.rand(32 if torch.cuda.is_available() else 1, ch_in, 320, 320).to(device)
+    #     img = torch.rand(1, *(input_shape)).to(device)
+    #     y = model(img, profile=True)
+    #
+    # # Test all models
+    # if opt.test:
+    #     for cfg in Path(ROOT / 'models').rglob('yolo*.yaml'):
+    #         try:
+    #             _ = Model(cfg)
+    #         except Exception as e:
+    #             print(f'Error in {cfg}: {e}')
+    # torch.cuda.empty_cache()
 
     # Tensorboard (not working https://github.com/ultralytics/yolov5/issues/2898)
     # from torch.utils.tensorboard import SummaryWriter
     # tb_writer = SummaryWriter('.')
     # LOGGER.info("Run 'tensorboard --logdir=models' to view tensorboard at http://localhost:6006/")
     # tb_writer.add_graph(torch.jit.trace(model, img, strict=False), [])  # add model graph
+
+
+
     from utils import get_model_complexity_info
 
     flops, params = get_model_complexity_info(model, input_shape)

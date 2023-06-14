@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 import warnings
 from utils import  segments2boxes, segments2boxes_xyxy, print_log, xyxy2xywh, xyn2xy, clip_label, mkdir
 from dataloader.data_utils import bbox_overlaps
+from functools import partial
 
 
 # Parameters
@@ -63,6 +64,8 @@ def select_sample(paths, filter_str='', remove_str=None, sample=1, bg_gain=1, ob
         else:
             if rand_num <= sample:
                 files.append(f)
+    if len(files)==0:
+        files.append(f)
     return files
 
 def select_image(path, filter_str='', remove_str=None, sample=1, bg_gain=1, obj_gain=1):
@@ -133,39 +136,35 @@ def img2npy(img_f):
         # gb = im.nbytes
     return  im
 
-def load_image_result(img_f, img_size=(640,640)):
+def initial_result(img_f, img_size=(640,640)):
     result = {}
-    if isinstance(img_f, str):
-        result['filename'] = img_f
-        # loads 1 image from dataset index 'i', returns im, original hw, resized hw
-
-        im = img2npy(img_f)  # BGR
-        assert im is not None, f'Image Not Found {img_f}'
-    else:
-        im = img_f
-        result['img'] = img_f
-        result['filename'] = None
-
-    shape = im.shape[:2] # origin shape [height, width]
-    result['ori_shape'] = shape
-    # result['img_shape'] = shape
-    # result['ori_img'] = im
-    assert (shape[0] > 9) & (shape[1] > 9), f'image size {shape} <10 pixels'
-
     # result['img'] = im #deepcopy(im)
     result['img_size'] = img_size
     result['labels'] = None
     result['segment'] = None
     result['instance_segments'] = None
-    del im  # not put in, avoid mp copy value and memory omm
+    if isinstance(img_f, str):
+        result['filename'] = img_f
+    else:
+        im = img_f
+        result['img'] = img_f
+        result['filename'] = None
+        assert im is not None, f'Image Not Found {img_f}'
+        shape = im.shape[:2] # origin shape [height, width]
+        result['ori_shape'] = shape
+        # result['img_shape'] = shape
+        # result['ori_img'] = im
+        assert (shape[0] > 9) & (shape[1] > 9), f'image size {shape} <10 pixels'
+        del im  # not put in, avoid mp copy value and memory omm
+
     return result
 
-def load_images(img_paths, img_size=(640,640)):
+def load_results(img_paths, img_size=(640,640)):
     if len(img_paths)>5000:
         results = []
         with futures.ThreadPoolExecutor(NUM_THREADS) as executor:
-            res = executor.map(load_image_result,img_paths)
-        pbar = tqdm(res, total=len(img_paths), bar_format='', desc='loading_images')
+            res = executor.map(initial_result,img_paths)
+        pbar = tqdm(res, total=len(img_paths), bar_format='', desc='init results')
         for result in pbar:
             result['img_size'] = img_size
             results.append(result)
@@ -181,7 +180,7 @@ def load_images(img_paths, img_size=(640,640)):
         #         results.append(result)
         # return results
     else:
-        return [load_image_result(img_f, img_size) for img_f in tqdm(img_paths, total=len(img_paths), bar_format='', desc='loading_images')]
+        return [initial_result(img_f, img_size) for img_f in tqdm(img_paths, total=len(img_paths), bar_format='', desc='loading_images')]
 
 def read_image(result):
     if 'img' not in result.keys():
@@ -189,6 +188,13 @@ def read_image(result):
         # loads 1 image from dataset index 'i', returns im, original hw, resized hw
         im = img2npy(img_f)  # BGR
         result['img'] = im # BGR
+        assert im is not None, f'Image Not Found {img_f}'
+        shape = im.shape[:2]  # origin shape [height, width]
+        result['ori_shape'] = shape
+        # result['img_shape'] = shape
+        # result['ori_img'] = im
+        assert (shape[0] > 9) & (shape[1] > 9), f'image size {shape} <10 pixels'
+        del im  # not put in, avoid mp copy value and memory omm
 
 def get_yolotxt(label_file, select_class):
     # l = []
@@ -342,15 +348,22 @@ def load_label(result, select_class=(), prefix='', logger=None):
     return result
 
 def load_labels(results, select_class=(), prefix='',filter_bkg=False, logger=None):
-    # n_rs = []
-    # with Pool(NUM_THREADS) as pool:
-    #     pbar = pool.imap(partial(load_label,select_class=select_class, prefix=prefix, logger=logger), results)
-    #     pbar = tqdm(pbar, total=len(results), bar_format='', desc='loading_labels')
-    #     for result in pbar:
-    #         n_rs.append(result)
-    # results = n_rs
-    # # it cost more in pool start and queue, eg:100s for 5400 labels, and only 2s without pool
-    results = [load_label(result, select_class=select_class, prefix=prefix, logger=logger) for result in tqdm(results, total=len(results), bar_format='', desc='loading_labels')]
+    # if len(results) > 5000:
+    #     load_func = partial(load_label,select_class=select_class, prefix=prefix, logger=logger)
+    #     n_rs = []
+    #     with futures.ThreadPoolExecutor(NUM_THREADS) as executor:
+    #         res = executor.map(load_func, results)
+    #         pbar = tqdm(res, total=len(results), bar_format='', desc='loading_labels')
+    #         for result in pbar:
+    #             n_rs.append(result)
+    #     results = n_rs
+    #     # it cost more in pool start and queue, eg:100s for 5400 labels, and only 2s without pool
+    # else:
+    #     results = [load_label(result, select_class=select_class, prefix=prefix, logger=logger) for result
+    #                in tqdm(results, total=len(results), bar_format='', desc='loading_labels')]
+
+    results = [load_label(result, select_class=select_class, prefix=prefix, logger=logger) for result in
+               tqdm(results, total=len(results), bar_format='', desc='loading_labels')]
     if filter_bkg:
         results = [result for result in results if len(result['labels'])]
 
@@ -382,7 +395,6 @@ def rect_shape(results, img_size, pad, stride, batch_size):
     for i, result in enumerate(results):
         result['rect_shape'] = batch_shapes[bi[i]]
         result['rectangle_stride'] = stride
-    return results
 
 def check_label(result, func):
     if result['labels'] is not None:
@@ -808,7 +820,8 @@ def small_crop_result(result, save_crop, save_dir_name, crop_w, crop_h, bx, by, 
 
 def save_img_label(save_name, bg_img, file_suffix, bg_labels):
     mkdir(save_name)
-    cv2.imwrite(save_name, bg_img)
+    if not Path(save_name).exists():
+        cv2.imwrite(save_name, bg_img)
     label_name = save_name.replace('images', 'labels').replace(file_suffix, '.txt')
     mkdir(label_name)
     np.savetxt(label_name, bg_labels, fmt='%d')

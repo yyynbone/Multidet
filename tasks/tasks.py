@@ -74,12 +74,12 @@ def before_train(hyp, opt, logger):
         ch_in = 3
     else:
         ch_in = 1
-    if resume:
-        ckpt = torch.load(weights, map_location='cpu')  # load checkpoint
-        model = ckpt.get('ema', ckpt['model']).float()
-        opt.cfg = ''
-    else:
-        model = Model(cfg, ch=ch_in, nc=nc, anchors=hyp.get('anchors'), logger=logger) # create
+    # if resume:
+    #     ckpt = torch.load(weights, map_location='cpu')  # load checkpoint
+    #     model = ckpt.get('ema', ckpt['model']).float()
+    #     opt.cfg = ''
+    # else:
+    #     model = Model(cfg, ch=ch_in, nc=nc, anchors=hyp.get('anchors'), logger=logger) # create
     # Image size
     # gs = int(model.stride.max()) if hasattr(model, 'stride') else max_stride
     # gs = max(gs, max_stride)  # grid size (max stride)
@@ -91,20 +91,20 @@ def before_train(hyp, opt, logger):
     elif len(imgsz) == 1:
         imgsz = (imgsz[0], imgsz[0])
     imgsz = check_img_size(imgsz, gs, floor=gs * 2, logger=logger)  # verify imgsz is gs-multiple
-    fs = cal_flops(de_parallel(model), imgsz)
+    # fs = cal_flops(de_parallel(model), imgsz)
 
     opt.imgsz = imgsz
     opt.gs = gs
     opt.hyp = hyp
     # Batch size
-    if batch_size == -1:  # single-GPU only, estimate best batch size
-        batch_size = check_train_batch_size(model, imgsz)
+    # if batch_size == -1:  # single-GPU only, estimate best batch size
+    #     batch_size = check_train_batch_size(model, imgsz)
+    #     opt.batch_size = batch_size
 
     # Train
     train_dataset, train_pre = get_dataset(train_path,
                                     train_pre,
                                     img_size=imgsz,
-                                    batch_size=batch_size,
                                     logger=logger,
                                     single_cls=single_cls,
                                     bgr=opt.bgr,
@@ -118,13 +118,10 @@ def before_train(hyp, opt, logger):
     mlc = 0  # int(np.concatenate(train_dataset.labels, 0)[:, 0].max())  # max label class
     assert mlc < nc, f'Label class {mlc} exceeds nc={nc} in {data}. Possible class labels are 0-{nc - 1}'
 
-    batch_size = min(batch_size, len(train_dataset))
-
     # Val
     val_dataset, val_pre = get_dataset(val_path,
                                       val_pre,
                                       img_size=imgsz,
-                                      batch_size=batch_size,
                                       logger=logger,
                                       single_cls=single_cls,
                                       bgr=opt.bgr,
@@ -138,8 +135,6 @@ def before_train(hyp, opt, logger):
 
 
     print_log(f'Image sizes {imgsz} train, {imgsz} val\n'
-              f'now with size of {imgsz}, {fs:.2f} GFLOPS\n'
-              f'Each epoch batch_size is {batch_size},iter is {len(train_dataset) / batch_size}\n'
               f"Logging results to {colorstr('bold', save_dir)}\n", logger)
 
     return  opt, train_dataset, train_pre, val_dataset, val_pre
@@ -151,7 +146,10 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
 
     epochs, batch_size, single_cls, imgsz, gs, data_dict = opt.epochs, opt.batch_size, opt.single_cls, \
                                                   opt.imgsz, opt.gs, opt.data_dict
-
+    if opt.teacher:
+        teacher_net = attempt_load(opt.teacher, device)
+    else:
+        teacher_net = None
     # Directories
     w = save_dir / 'weights'  # weights dir
     (w.parent if evolve else w).mkdir(parents=True, exist_ok=True)  # make dir
@@ -192,34 +190,38 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
         if isinstance(ckpt, dict):
             if ckpt.get('ema', None) is not None:
                 csd = ckpt['ema'].float().state_dict()
-                csd = intersect_dicts(csd, model.state_dict(), exclude=exclude)  # intersect
+                csd = intersect_dicts(csd, model.state_dict(), exclude=exclude, logger=logger)  # intersect
             elif ckpt.get('model', None) is not None:
                 csd = ckpt['model'].float().state_dict()
-                csd = intersect_dicts(csd, model.state_dict(), exclude=exclude)  # intersect
+                csd = intersect_dicts(csd, model.state_dict(), exclude=exclude, logger=logger)  # intersect
             else:
                 csd = ckpt['state_dict']
-                csd = intersect_dicts(csd, model.state_dict(), exclude=exclude, key_match=False)  # intersect
+                csd = intersect_dicts(csd, model.state_dict(), exclude=exclude, key_match=False, logger=logger)  # intersect
         else:
-            csd = intersect_dicts(ckpt, model.state_dict(), exclude=exclude, key_match=False)  # intersect
+            csd = intersect_dicts(ckpt, model.state_dict(), exclude=exclude, key_match=False, logger=logger)  # intersect
         model.load_state_dict(csd, strict=False)  # load
         print_log(f'Transferred {len(csd)}/{len(model.state_dict())} items from {weights}', logger)  # report
 
     else:
         model = Model(cfg, ch=ch_in, nc=nc, anchors=hyp.get('anchors'), logger=logger).to(device)  # create
+    fs = cal_flops(model, imgsz)
+    print_log(f'now with size of {imgsz}, {fs:.2f} GFLOPS\n', logger)
     # print('model load in: ', local_rank)
     # calculate class_weight
     train_dataset = LoadImagesAndLabels(train_pre,
                                         train_data,
+                                        batch_size=opt.batch_size,
+                                        local_rank=local_rank,
                                         logger=logger,
                                         bkg_ratio=getattr(opt, "bkg_ratio", 0),
                                         obj_mask=getattr(opt, "train_obj_mask", 0),
                                         sample_portion=getattr(opt, "train_sample_portion", 1),
-                                        pix_area=getattr(opt, 'pix_area', None)
+                                        pix_area=getattr(opt, 'pix_area', None),
+                                        cropped_imgsz=getattr(opt, "train_cropped_imgsz", False),
+                                        slide_crop=getattr(opt, "slide_crop", False),
+                                        crop_portion=getattr(opt, "crop_sample_portion", 1.),
                                         )
-    train_dataset.cropped_imgsz =  getattr(opt, "train_cropped_imgsz", False)
-    train_dataset.slide_crop = getattr(opt, "slide_crop", False)
-    with torch_distributed_zero_first(local_rank):
-        train_dataset.index_shuffle(local_rank)
+    batch_size = train_dataset.batch_size
     if node in [-1, 0] and local_rank in [-1, 0]:
         plot_labels(train_dataset.labels, names=select_class_tuple(data_dict), save_dir=save_dir, logger=logger)
     class_weights = labels_to_class_weights(train_dataset.labels, nc)
@@ -232,7 +234,7 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
         shuffle = True
     sampler = None if opt.world_size == 1 else SuffleDist_Sample(train_dataset, shuffle=shuffle)
     # loader = DataLoader  # if opt.image_weights else InfiniteDataLoader  # only DataLoader allows for attribute updates
-    batch_size = min(batch_size, len(train_dataset))
+
     train_loader = SuffleLoader(train_dataset,
                           batch_size=batch_size,
                           shuffle=shuffle and sampler is None,
@@ -255,20 +257,23 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
     # Process 0
     if not resume and local_rank in [-1, 0]:
         # Anchors
-        if not opt.noautoanchor:
+        if not opt.noautoanchor and model.yaml.get('anchors') is not None:
             check_anchors(train_dataset, model=model, imgsz=imgsz,  thr=hyp['anchor_t'], logger=logger)
 
     # Valloader
     val_dataset = LoadImagesAndLabels(val_pre,
                                       val_data,
+                                      batch_size=batch_size,
+                                      local_rank=local_rank,
                                       logger=logger,
                                       bkg_ratio=0,
                                       obj_mask=getattr(opt, "val_obj_mask", 0),
                                       sample_portion=getattr(opt, "val_sample_portion", 1),
-                                      pix_area=getattr(opt, 'pix_area', None)
+                                      pix_area=getattr(opt, 'pix_area', None),
+                                      cropped_imgsz=getattr(opt, "val_cropped_imgsz", False),
+                                      slide_crop=getattr(opt, "slide_crop", False),
                                       )
-    val_dataset.cropped_imgsz =  getattr(opt, "val_cropped_imgsz", False)
-    val_dataset.slide_crop = getattr(opt, "slide_crop", False)
+
     val_loader = SuffleLoader(val_dataset,
                             batch_size=batch_size,
                             shuffle=False,
@@ -277,7 +282,9 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
                             pin_memory=True,
                             collate_fn=LoadImagesAndLabels.collate_fn)
 
-    print_log(f"Epoch train image shape is {train_dataset[0][0].shape}, should input as (ch, y, x)", logger)
+    print_log(f"Epoch train image shape is {train_dataset[0][0].shape}, should input as (ch, y, x)"
+              f'Each epoch batch_size is {batch_size},iter is {len(train_dataset) / batch_size}\n'
+              , logger)
 
     # Freeze
     task_dict = {1: 'encoder', 2: 'neck', 3: 'head'}
@@ -397,9 +404,8 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
 
     # DDP mode
     if cuda and node != -1:
-        try:
-            model = DDP(model, device_ids=[local_rank], output_device=local_rank)
-        except:
+            # model = DDP(model, device_ids=[local_rank], output_device=local_rank)
+
             model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
 
     model.nc = hyp['nc']
@@ -419,7 +425,7 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
     scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)  # plot_lr_scheduler(optimizer, scheduler, epochs)
 
 
-    nw = max(round(hyp['warmup_epochs'] * nb), 100*32/batch_size)  # number of warmup iterations, max(3 epochs, 1k iterations)
+    nw = max(round(hyp['warmup_epochs'] * nb), 1000*8/batch_size)  # number of warmup iterations, max(3 epochs, 1k iterations)
     # nw = min(nw, (epochs - start_epoch) / 2 * nb)  # limit warmup to < 1/2 of training
     last_opt_step = -1
     maps = np.zeros(model.nc)  # mAP per class
@@ -464,9 +470,13 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
             # Update mosaic border (optional)
             # b = int(random.uniform(0.25 * imgsz, 0.75 * imgsz + gs) // gs * gs)
             # dataset.mosaic_border = [b - imgsz, -b]  # height, width borders
-            if  epoch%getattr(opt, 'shuffle_epoch', 100)==0:
+            if  epoch%getattr(opt, 'shuffle_epoch', 1000)==0:
                 print_log(f'now we shuffle index in {epoch}', logger)
-                train_loader.shuffle_index(local_rank)
+                train_loader.shuffle_index()
+                if node in [-1, 0] and local_rank in [-1, 0]:
+                    val_loader.shuffle_index()
+                print_log(f'now train shuffle and now dataset length is {len(train_loader)}', logger)
+                print_log(f'now val shuffle and now dataset length is {len(val_loader)}', logger)
             # sampler = None if opt.world_size == 1 else distributed.DistributedSampler(train_dataset, shuffle=shuffle)
             # loader = DataLoader  # if opt.image_weights else InfiniteDataLoader  # only DataLoader allows for attribute updates
             # train_loader = loader(train_dataset,
@@ -478,10 +488,12 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
             #                       pin_memory=True,
             #                       collate_fn=LoadImagesAndLabels.collate_fn)
             # print('shuffle_index load in: ', local_rank)
+            # print("#################################################", local_rank)
             if node != -1:
                 train_loader.sampler.set_epoch(epoch)
             pbar = enumerate(train_loader)
             nb = len(train_loader)  # number of batches
+            # print("#################################################after", local_rank)
             # print(len(train_dataset), nb, batch_size, train_loader.batch_size, train_loader.batch_sampler)
             # print(logger.handlers)
             # if node in [-1,0] and local_rank in [-1,0]:
@@ -553,657 +565,17 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
                 with amp.autocast(enabled=cuda):
                     head_out = model(imgs)  # forward
                     det_pred = head_out[de_parallel(model).out_det_from]
-                    loss, loss_items = compute_loss(det_pred, targets)  # loss scaled by batch_size
-                    if node != -1:
-                        loss *= world_size  # gradient averaged between devices in DDP mode
-                    if opt.quad:
-                        loss *= 4.
-
-                # Backward
-
-                scaler.scale(loss).backward()
-                # Optimize
-                # each iter batchsize must bigger then 64, eg：if bs is 128, accumulate=1 , if bs is 32, accumulate=2
-                if ni - last_opt_step >= accumulate:
-                    # clip the grad, to avoid the grad eruption(nan), clip_grad_norm_ or clip_grad_value_
-                    # Divides ("unscales") the optimizer's gradient tensors by the scale factor，
-                    # 这里统计并存入dict, optimizer_state["found_inf_per_device"]，check inf的数量，无则为0
-                    scaler.unscale_(optimizer)
-                    # # calculate grad norm,so that we can set max_norm
-                    # parameters = [p for p in model.parameters() if p.grad is not None]
-                    # total_norm = torch.norm(
-                    #     torch.stack([torch.norm(p.grad.detach(), 2).to(device) for p in parameters]), 2)
-                    # print(total_norm)
-                    # total_norm in (100,200)
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=20)
-                    # print(f"now optimizer step, ni{ni} - last_opt_step{last_opt_step} >="
-                    # "accumulate{accumulate}, nbs is {nbs}, batch_size is {batch_size}")
-
-                    # optimizer.step  # If inf/NaN gradients are found, `optimizer.step()`
-                    # is skipped to avoid corrupting the params,使用self._maybe_opt_step，
-                    scaler.step(optimizer)
-                    # print("optimizer._step_count is ", optimizer._step_count)
-                    # 前5个iter ,一直为0，第6个开始为1，然后开始累加  #由上分析知，梯度含inf值
-                    scaler.update()
-                    optimizer.zero_grad()
-                    if node in [-1, 0] and local_rank in [-1, 0]:
-                        ema.update(model)
-                        # if i % 20 == 19:
-                        #     show_model_param(ema.ema,f'after_{epoch}_{i}')
-                    last_opt_step = ni
-
-                # change callbacks keys
-                if i == 0 and node in [-1, 0] and local_rank in [-1, 0]:
-                    # loss_num = loss_items.size()[0] if len(loss_items.size()) else 1:
-                    if loss_num == 3:
-                        par_msg = '%10s' * 7 % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'labels', 'img_size')
-                    elif loss_num == 4:
-                        par_msg = '%10s' * 8 % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'seg', 'labels', 'img_size')
-                        callbacks.keys = ['train/box_loss', 'train/obj_loss', 'train/cls_loss',
-                                          'train/seg_loss'  # train loss
-                                          'metrics/precision', 'metrics/recall', 'metrics/mAP_0.5',
-                                          'metrics/mAP_0.5:0.95',  # metrics
-                                          'val/box_loss', 'val/obj_loss', 'val/cls_loss', 'val/seg_loss'  # val loss
-                                                                                          'x/lr0', 'x/lr1',
-                                          'x/lr2']  # params
-                    else:
-                        callbacks.keys = ['train/cls_loss',  # train loss
-                                          'metrics/precision', 'metrics/recall', 'metrics/mAP_0.5',
-                                          'metrics/mAP_0.5:0.95',  # metrics
-                                          'val/cls_loss',  # val loss
-                                          'x/lr0', 'x/lr1', 'x/lr2']  # params
-                        par_msg = '%10s' * 7 % ('Epoch', 'gpu_mem', 'cls', 'all_pic', 'obj', 'labels', 'img_size')
-                    print_log(par_msg, logger)
-                # Log
-                if node in [-1, 0] and local_rank in [-1, 0]:
-                    mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
-                    mem = f'{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G'  # (GB)
-                    if loss_num == 1:
-                        pbar.set_description(('%10s' * 2 + '%10.4g' * (loss_num + 4)) % (
-                            f'{epoch}/{epochs - 1}', mem, *mloss, targets[0].shape[0], targets[0].sum(),
-                            targets[1].shape[0], imgs.shape[-1]))
-                    else:
-                        pbar.set_description(('%10s' * 2 + '%10.4g' * (2 + loss_num)) % (
-                            f'{epoch}/{epochs - 1}', mem, *mloss, targets[1].shape[0], imgs.shape[-1]))
-
-                    callbacks.on_train_batch_end(ni, model, imgs, targets, paths, plots, opt.sync_bn)
-
-            # Scheduler
-            lr = [x['lr'] for x in optimizer.param_groups]  # for loggers
-            # print("now scheduler step means lr_scheduler step")
-            scheduler.step()
-            if node in [-1, 0] and local_rank in [-1, 0] and opt.loss_supervision:
-                lr_coeft = out_saddle(epoch=epoch, loss=loss.item())
-                if lr_coeft > 1:
-                    print_log(f'now in epoch {epoch}, lr coefficient is:{lr_coeft}', logger)
-
-        if node in [-1, 0] and local_rank in [-1, 0]:
-
-            val_loader.shuffle_index(-1)
-
-            if opt.val_train:
-                results, _, times = val(data_dict,
-                                        batch_size=batch_size,
-                                        imgsz=imgsz,
-                                        model=ema.ema,  # de_parallel(model),
-                                        single_cls=single_cls,
-                                        verbose=True,
-                                        dataloader=train_loader,
-                                        save_dir=save_dir,
-                                        plots=False,
-                                        compute_loss=compute_loss,
-                                        bgr=opt.bgr,
-                                        div_area=opt.div_area,
-                                        last_conf=opt.last_conf,
-                                        loss_num=loss_num,
-                                        logger=logger)
-
-                loss_tuple = results[-1]
-                msg = 'Valuate traindataset before ema update(model update) Epoch: [{0}]    Loss({loss})\n' \
-                      'Detect: P({p:.3f})  R({r:.3f})  mAP@0.5({map50:.3f})  mAP@0.5:0.95({map:.3f})\n' \
-                      'Time: inference({t_inf:.4f}s/frame)  nms({t_nms:.4f}s/frame)'.format(
-                    epoch, loss=loss_tuple,
-                    p=results[0], r=results[1], map50=results[2], map=results[3],
-                    t_inf=times[1], t_nms=times[2])
-                print_log(msg, logger)
-
-            # mAP
-            # callbacks.on_train_epoch_end(epoch=epoch)
-            ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'names', 'stride', 'class_weights'])
-            final_epoch = (epoch + 1 == epochs) or stopper.possible_stop
-            if not noval or final_epoch:  # Calculate mAP
-                results, maps, times = val(data_dict,
-                                           batch_size=batch_size,
-                                           imgsz=imgsz,
-                                           model=ema.ema,  # de_parallel(model),
-                                           single_cls=single_cls,
-                                           verbose=True,
-                                           dataloader=val_loader,
-                                           save_dir=save_dir,
-                                           plots=True,
-                                           compute_loss=compute_loss,
-                                           bgr=opt.bgr,
-                                           div_area=opt.div_area,
-                                           last_conf=opt.last_conf,
-                                           loss_num=loss_num,
-                                           logger=logger)
-                if not opt.val_first:
-                    loss_tuple = results[-1]
-                    msg = 'Epoch: [{0}]    Loss({loss})\n' \
-                          'Detect: P({p:.3f})  R({r:.3f})  mAP@0.5({map50:.3f})  mAP@0.5:0.95({map:.3f})\n' \
-                          'Time: inference({t_inf:.4f}s/frame)  nms({t_nms:.4f}s/frame)'.format(
-                        epoch, loss=loss_tuple,
-                        p=results[0], r=results[1], map50=results[2], map=results[3],
-                        t_inf=times[1], t_nms=times[2])
-                    all_results = results[:4]
-                    log_vals = list(mloss) + list(results[:4]) + list(loss_tuple) + lr
-                    print_log(msg, logger)
-
-                    # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
-                    # fi = fitness(np.array(all_results).reshape(1, -1))
-                    fi = all_results[3]
-                    precision_fi, recall_fi = all_results[:2]
-
-                    callbacks.on_fit_epoch_end(log_vals, epoch)
-                    # Save model
-                    if (not nosave) or (final_epoch and not evolve):  # if save
-                        ckpt = {'epoch': epoch,
-                                'best_fitness': fi,
-                                'model': deepcopy(de_parallel(model)).half(),
-                                'ema': deepcopy(ema.ema).half(),
-                                'updates': ema.updates,
-                                'optimizer': optimizer.state_dict(),
-                                'date': datetime.now().isoformat()}
-                        # Save last, best and delete
-                        if torch.isnan(torch.tensor(loss_tuple)).sum():
-                            torch.save(ckpt, w / 'nanerupt.pt')
-                            print("warning now wo found a nan in loss in val")
-                            break
-                        else:
-                            torch.save(ckpt, last)
-                        if fi > best_fitness:
-                            best_fitness = fi
-                            torch.save(ckpt, best)
-                            print_log(f'best epoch saved in Epoch {epoch}', logger)
-
-                        if recall_fi > 0.93 and precision_fi > 0.9:
-                            torch.save(ckpt, w / f'epoch{epoch}.pt')
-                            print_log(f'a better recall epoch saved in Epoch {epoch}', logger)
-                        if recall_fi > 0.8:
-                            re_fi = precision_fi + (2 - 0.8) / (1 - 0.8 ** 2) * recall_fi
-                            if re_fi > best_r:
-                                best_r = re_fi
-                                torch.save(ckpt, best_rt)
-                                print_log(f'best recall epoch saved in Epoch {epoch}', logger)
-
-                        pr_fi = 2.8 * precision_fi * recall_fi / np.maximum(1.8 * precision_fi + recall_fi, 1e-20)
-
-                        if pr_fi > best_p and recall_fi > 0.6:
-                            best_p = pr_fi
-                            torch.save(ckpt, best_pt)
-                            print_log(f'best precision epoch saved in Epoch {epoch}', logger)
-
-                        if (epoch > 0) and (opt.save_period > 0) and (epoch % opt.save_period == 0):
-                            torch.save(ckpt, w / f'epoch{epoch}.pt')
-                        if (epoch < hyp['warmup_epochs'] + 3) and opt.save_warm:
-                            torch.save(ckpt, w / f'epoch{epoch}.pt')
-                        del ckpt
-                        # callbacks.on_model_save(last, epoch, final_epoch, best_fitness, fi)
-
-                    stop = stopper(epoch=epoch, fitness=fi)
-                    plot_results(file=save_dir / 'results.csv')  # save results.png
-
-        if opt.val_first:
-            opt.val_first = False
-
-        #####################stop and broadcast#######################
-        # Stop Single-GPU
-        if node == -1:
-            if stop:
-                break
-        else:
-            # Stop DDP
-            if node == 0 and local_rank == 0:
-                broadcast_list = [stop, lr_coeft]
-                # print('broadcast is', broadcast_list, local_rank)
-            # else:
-            #     broadcast_list = [None, None]
-            # print('broadcast is', broadcast_list, local_rank)
-            dist.broadcast_object_list(broadcast_list, 0)  # broadcast 'stop' to all ranks
-            # Stop DPP
-            # print('now after broadcast is', broadcast_list, local_rank)
-            with torch_distributed_zero_first(local_rank):
-                stop = broadcast_list[0]
-                if stop:
-                    break  # must break all DDP ranks
-            ############################################
-
-        # end epoch ---------------------------------------------
-    # end training ------------------------------------------------
-    if node in [-1, 0] and local_rank in [-1, 0]:
-        print_log(f'\n{epoch - start_epoch + 1} epochs completed in {(time.time() - t0) / 3600:.3f} hours.', logger)
-        for f in glob(f'{w}/*.pt'):
-            if os.path.exists(f):
-                strip_optimizer(f)  # strip optimizers
-                if f in (best, best_pt, best_rt):
-                    print_log(f'\nValidating {f}...', logger)
-                    results, _, _ = val(data_dict,
-                                        batch_size=batch_size * 2,
-                                        imgsz=imgsz,
-                                        model=attempt_load(f, device).half(),
-                                        iou_thres=0.60,  # best pycocotools results at 0.65
-                                        single_cls=single_cls,
-                                        dataloader=val_loader,
-                                        save_dir=save_dir,
-                                        verbose=True,
-                                        plots=True,
-                                        compute_loss=compute_loss,
-                                        bgr=opt.bgr,
-                                        div_area=opt.div_area,
-                                        last_conf=opt.last_conf,
-                                        loss_num=loss_num,
-                                        logger=logger)  # val best model with plots
-
-        callbacks.on_train_end(best, plots)
-        print_log(f"Results saved to {colorstr('bold', save_dir)}", logger)
-
-    torch.cuda.empty_cache()
-    return results
-
-def kd_train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_rank=-1, node=-1, world_size=1):
-
-    save_dir, evolve, data, hyp, weights, cfg, resume, noval, nosave, workers, freeze = Path(opt.save_dir), opt.evolve,\
-            opt.data, opt.hyp, opt.weights, opt.cfg, opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze
-
-    epochs, batch_size, single_cls, imgsz, gs, data_dict = opt.epochs, opt.batch_size, opt.single_cls, \
-                                                  opt.imgsz, opt.gs, opt.data_dict
-
-    teacher_net = attempt_load(opt.teacher, device)
-    temperature = opt.temperature
-    # Directories
-    w = save_dir / 'weights'  # weights dir
-    (w.parent if evolve else w).mkdir(parents=True, exist_ok=True)  # make dir
-    last, best = w / 'last.pt', w / 'best.pt'
-    best_pt, best_rt = w / 'best_precision.pt', w / 'best_recall.pt'
-    best_p, best_r = 0., 0.
-    start_epoch, best_fitness = 0, 0.0
-    # Config
-    plots = not opt.evolve  # create plots
-    cuda = device.type != 'cpu'
-
-
-    # callback only in local_rank = 0
-    if node in [-1, 0] and local_rank in [-1, 0]:
-        callbacks = Callback(save_dir, opt, logger=logger)  # callback instance
-    else:
-        callbacks =None
-
-        # Model
-    check_suffix(weights, '.pt')  # check weights
-    pretrained = weights.endswith('.pt')
-    if opt.bgr:
-        ch_in = 3
-    else:
-        ch_in = 1
-    nc = hyp['nc']
-    if pretrained:
-
-        ckpt = torch.load(weights, map_location=device)  # load checkpoint
-        model = Model(cfg or ckpt['model'].yaml, ch=ch_in, nc=nc, anchors=hyp.get('anchors'), logger=logger).to(
-            device)  # create
-
-        # exclude = ['anchor'] if (cfg or hyp.get('anchors')) and not resume else active_layer # exclude keys
-        exclude = ['anchor'] if (cfg or hyp.get('anchors')) and not resume else []  # exclude keys
-
-        # checkpoint state_dict as FP32
-        # csd =  ckpt['ema'].float().state_dict() if 'ema' in ckpt.keys()  else ckpt['model'].float().state_dict()
-        if isinstance(ckpt, dict):
-            if ckpt.get('ema', None) is not None:
-                csd = ckpt['ema'].float().state_dict()
-                csd = intersect_dicts(csd, model.state_dict(), exclude=exclude)  # intersect
-            elif ckpt.get('model', None) is not None:
-                csd = ckpt['model'].float().state_dict()
-                csd = intersect_dicts(csd, model.state_dict(), exclude=exclude)  # intersect
-            else:
-                csd = ckpt['state_dict']
-                csd = intersect_dicts(csd, model.state_dict(), exclude=exclude, key_match=False)  # intersect
-        else:
-            csd = intersect_dicts(ckpt, model.state_dict(), exclude=exclude, key_match=False)  # intersect
-        model.load_state_dict(csd, strict=False)  # load
-        print_log(f'Transferred {len(csd)}/{len(model.state_dict())} items from {weights}', logger)  # report
-
-    else:
-        model = Model(cfg, ch=ch_in, nc=nc, anchors=hyp.get('anchors'), logger=logger).to(device)  # create
-
-    # calculate class_weight
-    train_dataset = LoadImagesAndLabels(train_pre,
-                                        train_data,
-                                        logger=logger,
-                                        bkg_ratio=getattr(opt, "bkg_ratio", 0),
-                                        obj_mask=getattr(opt, "train_obj_mask", 0)
-                                        )
-    class_weights = labels_to_class_weights(train_dataset.labels, nc)
-    hyp['cls_weight'] = class_weights
-    opt.hyp = hyp
-    if opt.rect:
-        logger.warning('WARNING: --rect is incompatible with DataLoader shuffle, setting shuffle=False')
-        shuffle = False
-    else:
-        shuffle = True
-    sampler = None if opt.world_size == 1 else distributed.DistributedSampler(train_dataset, shuffle=shuffle)
-    loader = DataLoader  # if opt.image_weights else InfiniteDataLoader  # only DataLoader allows for attribute updates
-    train_loader = loader(train_dataset,
-                          batch_size=batch_size,
-                          shuffle=shuffle and sampler is None,
-                          num_workers=workers,
-                          sampler=sampler,
-                          pin_memory=True,
-                          collate_fn=LoadImagesAndLabels.collate_fn)
-
-    # if opt.image_weights:
-    #     iw = labels_to_image_weights(train_dataset.labels, nc=nc, class_weights=class_weights / nc)  # image weights
-    #     # eg:pic num is 10 , class_weights is (0.2,0.3,1,1,1,1,...)(because real class_num=2 (but to 80)
-    #     # dataset.indices before is (0,1,2,...9)
-    #     # but now is (2,3,2,3 ,4,2,0,0,3,2) like this, so some pic is not trained
-    #     # dataset.indices = random.choices(range(dataset.n), weights=iw, k=dataset.n)\
-    #     # so modified to this:
-    #     add_indices = random.choices(range(train_dataset.n), weights=iw, k=train_dataset.n)  # rand weighted idx
-    #     train_dataset.indices = np.concatenate((train_dataset.indices, add_indices))
-    print_log('train dataset loader done', logger)
-    batch_size = min(batch_size, len(train_dataset))
-    # Process 0
-    if not resume and local_rank in [-1, 0]:
-        # Anchors
-        if not opt.noautoanchor:
-            check_anchors(train_dataset, model=model, imgsz=imgsz, thr=hyp['anchor_t'], logger=logger)
-
-    # Valloader
-    val_dataset = LoadImagesAndLabels(val_pre,
-                                      val_data,
-                                      logger=logger,
-                                      bkg_ratio=0,
-                                      obj_mask=getattr(opt, "val_obj_mask", 0)
-                                      )
-    val_loader = DataLoader(val_dataset,
-                            batch_size=batch_size,
-                            shuffle=False,
-                            num_workers=workers,
-                            sampler=None,
-                            pin_memory=True,
-                            collate_fn=LoadImagesAndLabels.collate_fn)
-
-    print_log(f"Epoch train image shape is {train_dataset[0][0].shape}, should input as (ch, y, x)", logger)
-
-    # Freeze
-    task_dict = {1: 'encoder', 2: 'neck', 3: 'head'}
-    freeze = list(range(freeze))
-
-    neck_from_idx = model.neck_from
-    head_from_idx = model.head_from
-
-    para_idx = [[i for i in range(0, neck_from_idx)],
-                [i for i in range(neck_from_idx, head_from_idx)],
-                [i for i in range(head_from_idx, len(model.model) + 1)],
-                ]
-
-    if not opt.task:  # [encoder,det,da_seg,l1_seg]
-        pass
-    else:
-        for i in range(1, len(para_idx)):
-            if not i in opt.task:
-                print_log(f'freeze {task_dict[i]}', logger)
-                freeze += para_idx[i - 1]
-    # active_layer = [f'model.{x}.' for x in range(len(model.layer)) if x not in freeze]
-    # freeze = [f'model.{x}.' for x in range(freeze)]  # layers to freeze
-
-    freeze = [f'model.{x}.' for x in set(freeze)]
-
-    model.freeze = freeze
-    for k, v in model.named_parameters():
-        v.requires_grad = True  # train all layers
-        if any(x in k for x in freeze):
-            print_log(f'freezing {k}', logger)
-            v.requires_grad = False
-
-    # with torch_distributed_zero_first(local_rank):
-    #     show_model_param(model,'origin')
-
-    # set model.train_val_filter
-    model.train_val_filter = opt.train_val_filter
-    g0, g1, g2 = [], [], []  # optimizer parameter groups
-    for v in model.modules():
-        if hasattr(v, 'bias') and isinstance(v.bias, nn.Parameter):  # bias
-            g2.append(v.bias)
-        if isinstance(v, nn.BatchNorm2d):  # weight (no decay)
-            g0.append(v.weight)
-        elif hasattr(v, 'weight') and isinstance(v.weight, nn.Parameter):  # weight (with decay)
-            g1.append(v.weight)
-
-    if opt.adam:
-        optimizer = Adam(g0, lr=hyp['lr0'], betas=(hyp['momentum'], 0.999))  # adjust beta1 to momentum
-    else:
-        optimizer = SGD(g0, lr=hyp['lr0'], momentum=hyp['momentum'], nesterov=True)
-
-    optimizer.add_param_group({'params': g1, 'weight_decay': hyp['weight_decay']})  # add g1 with weight_decay
-    optimizer.add_param_group({'params': g2})  # add g2 (biases)
-    print_log(f"{colorstr('optimizer:')} {type(optimizer).__name__} with parameter groups "
-              f"{len(g0)} weight, {len(g1)} weight (no decay), {len(g2)} bias", logger)
-    del g0, g1, g2
-
-    # EMA
-    ema = ModelEMA(model)
-
-    # Resume
-
-    if pretrained and len(csd) == len(model.state_dict()):
-        # Optimizer
-        if ckpt['optimizer'] is not None and resume:
-            optimizer.load_state_dict(ckpt['optimizer'])
-            best_fitness = ckpt['best_fitness']
-            print_log('now load optimizer param done', logger)
-
-        # EMA
-        if ema and ckpt.get('ema'):
-            ema.ema.load_state_dict(ckpt['ema'].float().state_dict())
-            ema.updates = ckpt['updates']
-            print_log('now load ema state dict param done', logger)
-
-        # Epochs
-        # start_epoch = 0
-        if resume:
-            print_log(f'Resuming training from {opt.weights}', logger)
-            ckpt['epoch'] = ckpt.get('epoch', -1)
-            start_epoch = ckpt['epoch'] + 1
-            assert start_epoch > 0, f'{weights} training to {epochs} epochs is finished, nothing to resume.'
-        if epochs < start_epoch:
-            print_log(f"{weights} has been trained for {ckpt['epoch']} epochs. Fine-tuning for {epochs} more epochs.",
-                      logger)
-            epochs += ckpt['epoch']  # finetune additional epochs
-        del ckpt, csd
-    opt.best_fitness = best_fitness
-    if hasattr(de_parallel(model), 'det_head_idx'):
-        nl = de_parallel(model).model[de_parallel(model).det_head_idx].nl  # number of detection layers (to scale hyps)
-        hyp['box'] *= 3 / nl  # scale to layers
-        hyp['cls'] *= nc / 80 * 3 / nl  # scale to classes and layers
-        # hyp['obj'] *= (max(imgsz) / 640) ** 2 * 3 / nl  # scale to image size and layers
-        hyp['label_smoothing'] = opt.label_smoothing
-
-
-
-    init_seeds(1 + node)
-    # Optimizer
-    nbs = 64  # nominal batch size
-    accumulate = max(round(nbs / batch_size), 1)  # accumulate loss before optimizing
-    hyp['weight_decay'] *= batch_size * accumulate / nbs  # scale weight_decay
-    print_log(f"Scaled weight_decay = {hyp['weight_decay']}", logger)
-
-    # DP mode
-    if cuda and node == -1 and torch.cuda.device_count() > 1:
-        logger.warning('WARNING: DP not recommended, use torch.distributed.run for best DDP Multi-GPU results.\n')
-        # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>  modify
-        # model = BalancedDataParallel(32,model,dim =0).to(device)
-        model = torch.nn.DataParallel(model)
-        #  modify  <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<#
-
-    # SyncBatchNorm
-    if opt.sync_bn and cuda and node != -1:
-        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model).to(device)
-        print_log('Using SyncBatchNorm()', logger)
-
-    nb = len(train_loader)  # number of batches
-
-    # DDP mode
-    if cuda and node != -1:
-        try:
-            model = DDP(model, device_ids=[local_rank], output_device=local_rank)
-        except:
-            model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
-
-    model.nc = hyp['nc']
-    model.names = hyp['names']
-    model.hyp = hyp  # attach hyperparameters to model
-    model.class_weights = torch.from_numpy(hyp['cls_weight']) * model.nc  # attach class weights
-
-
-    # Scheduler
-    if opt.linear_lr:
-        lf = linear(1, hyp['lrf'], epochs)  # linear
-
-    elif hyp['lrf'] < 0.1 and epochs > 1000:
-        lf = soft_cos_log(1, hyp['lrf'], epochs)  # cosine 1->hyp['lrf']
-    else:
-        lf = one_cycle(1, hyp['lrf'], epochs)  # cosine 1->hyp['lrf']
-    scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)  # plot_lr_scheduler(optimizer, scheduler, epochs)
-
-
-    nw = max(round(hyp['warmup_epochs'] * nb), 1000)  # number of warmup iterations, max(3 epochs, 1k iterations)
-    # nw = min(nw, (epochs - start_epoch) / 2 * nb)  # limit warmup to < 1/2 of training
-    last_opt_step = -1
-    maps = np.zeros(model.nc)  # mAP per class
-    results = (0, 0, 0, 0, 0, 0, 0)  # P, R, mAP@.5, mAP@.5-.95, val_loss(box, obj, cls)
-    scheduler.last_epoch = start_epoch - 1  # do not move
-    scaler = amp.GradScaler(enabled=cuda)
-    stopper = EarlyStopping(patience=opt.patience, logger=logger)
-    # lr_coeft = torch.tensor(1.0, device=device)
-    stop = False
-    broadcast_list = [stop, 1.]  # stop, lr_coeft
-    out_saddle = LossSaddle(patience=opt.loss_supervision, logger=logger)
-
-    compute_loss = eval(opt.loss)(model, logger=logger)  # init loss class
-    loss_num = compute_loss.loss_num
-    pos_schedule = eval(hyp.get("pos_schedule", "linear"))(hyp.get('lr_start_pos_weight', 0),
-                                                           hyp.get('max_pos_weight', 10), epochs)
-
-    print_log(f'out_saddle is {out_saddle}\n stopper is {stopper} \n '
-              f'Using {train_loader.num_workers} dataloader workers per gpu \n'
-              f'compute_loss is {compute_loss} \n pos_schedule is {pos_schedule}\n'
-              f'Starting training for {epochs} epochs...', logger)
-
-    if opt.val_first:
-        start_epoch -= 1
-
-    # Start training
-    t0 = time.time()
-
-    for epoch in range(start_epoch, epochs):  # epoch ---------------------------------------------------------
-        # print('before epoch after broadcast is', broadcast_list, local_rank)
-        lr_coeft = broadcast_list[1]
-        # print('before epoch after broadcast is', lr_coeft, local_rank)
-        if not opt.val_first:
-            model.train()
-            # Update image weights (optional, single-GPU only)
-            if opt.image_weights:
-                cw = model.class_weights * (1 - maps) ** 2 / model.nc  # class weights
-                iw = labels_to_image_weights(train_loader.dataset.labels, nc=model.nc, class_weights=cw)  # image weights
-                train_loader.dataset.indices = random.choices(range(len(train_loader.dataset)), weights=iw,
-                                                       k=len(train_loader.dataset))  # rand weighted idx
-            else:
-                train_loader.dataset.index_shuffle()
-            # Update mosaic border (optional)
-            # b = int(random.uniform(0.25 * imgsz, 0.75 * imgsz + gs) // gs * gs)
-            # dataset.mosaic_border = [b - imgsz, -b]  # height, width borders
-
-            if node != -1:
-                train_loader.sampler.set_epoch(epoch)
-            pbar = enumerate(train_loader)
-
-            # print(logger.handlers)
-            # if node in [-1,0] and local_rank in [-1,0]:
-            # if len(logger.handlers):
-            if logger.level==20:
-                print_log(f"{datetime.now().strftime('%Y-%m-%d_%H:%M:%S')}", logger)
-                pbar = tqdm(pbar, total=nb, ncols=200, bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}')  # progress bar
-            optimizer.zero_grad()
-
-            mloss = torch.zeros(loss_num, device=device)  # mean losses
-
-            if hasattr(compute_loss, 'pos_weight'):
-                # if compute_loss.pos_weight is None:
-                #     ft_num = targets[0].shape[0] - targets[0].sum()
-                #     label_pos_weight = torch.tensor([ft_num / max(targets[0].sum(), 1)])
-                epoch_pos_w = round(pos_schedule(epoch), 2)
-                if epoch_pos_w > compute_loss.label_pos_weight:
-                    compute_loss.pos_weight = torch.tensor([epoch_pos_w])
-                print_log(
-                    f'now epoch_pos_w is {epoch_pos_w}, ClassifyLoss label_pos_weight is {compute_loss.label_pos_weight}, ClassifyLoss pos_weight is {compute_loss.pos_weight}',
-                    logger)
-
-            for i, (imgs, targets, paths) in pbar:  # batch -------------------------------------------
-                # class_label, labels_out, seg_img = targets
-                targets = [t.to(device) if t is not None else t for t in targets]
-                # targets = targets.to(device)
-                # if i > 1:
-                #     break
-                ni = i + nb * epoch  # number integrated batches (since train start)
-                imgs = imgs.to(device, non_blocking=True).float() / 255  # uint8 to float32, 0-255 to 0.0-1.0
-
-                # Warmup
-                if ni <= nw:
-                    xi = [0, nw]  # x interp
-                    # compute_loss.gr = np.interp(ni, xi, [0.0, 1.0])  # iou loss ratio (obj_loss = 1.0 or iou)
-                    accumulate = max(1, np.interp(ni, xi, [1, nbs / batch_size]).round())
-                    # optimizer.param_groups 每个iter都自动更新，即 enumerate(optimizer.param_groups) 只会有当前iter的g0,g1,g2 信息
-                    for j, x in enumerate(optimizer.param_groups):
-                        # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
-                        x['lr'] = np.interp(ni, xi,
-                                            [hyp['warmup_bias_lr'] if j == 2 else 0.0, x['initial_lr'] * lf(epoch)])
-                        if 'momentum' in x:
-                            x['momentum'] = np.interp(ni, xi, [hyp['warmup_momentum'], hyp['momentum']])
-
-                # add lr grows up when in saddle point
-                # 其实这是每个iter都会做这步，如有33个iter， x['lr']最后会变成 a*(lr_coeft**33),故设置每5个iter增加一次
-                # if i%(nb//3) == 0: #每个epoch 4 次
-                if i == 0:
-                    for j, x in enumerate(optimizer.param_groups):
-                        x['lr'] *= lr_coeft
-                        if j == 2 and ni <= nw:
-                            x['lr'] = min(x['lr'], hyp['warmup_bias_lr'])
-                        else:
-                            x['lr'] = min(x['lr'], x['initial_lr'])
-
-                # if lr_coeft >1. :
-                #     loggerprint_log(f"in epoch {epoch}, lr_coefficient is {lr_coeft}, lr is {x['lr']}")
-
-                # Multi-scale
-                if opt.multi_scale:
-                    sz = random.randrange(max(imgsz) * 0.5, max(imgsz) * 1.5 + gs) // gs * gs  # size
-                    sf = sz / max(imgs.shape[2:])  # scale factor
-                    if sf != 1:
-                        ns = [math.ceil(x * sf / gs) * gs for x in
-                              imgs.shape[2:]]  # new shape (stretched to gs-multiple)
-                        imgs = nn.functional.interpolate(imgs, size=ns, mode='bilinear', align_corners=False)
-
-                # Forward
-                with amp.autocast(enabled=cuda):
-                    head_out = model(imgs)  # forward
-                    det_pred = head_out[de_parallel(model).out_det_from]
-                    loss, loss_items = compute_loss(det_pred, targets, teacher_net)  # loss scaled by batch_size
 
                     if teacher_net is not None:
+                        loss, loss_items = compute_loss(det_pred, targets, teacher_net)  # loss scaled by batch_size
                         loss_lambda = 0.5
+                        temperature = 1000
                         te_out, te_pred = teacher_net(imgs)[teacher_net.out_det_from]
                         te_loss = teacher_loss(det_pred, te_pred, temperature)
                         loss = (1 - loss_lambda) * loss + loss_lambda * te_loss
+                    else:
+                        loss, loss_items = compute_loss(det_pred, targets)  # loss scaled by batch_size
+
                     if node != -1:
                         loss *= world_size  # gradient averaged between devices in DDP mode
                     if opt.quad:
@@ -1643,7 +1015,7 @@ def val(data,
                     visual_match_pred(im[si], match_id, pred_b_s_l, box_l, path, save_dir=save_dir, names=names,
                                       conf_ts=last_conf) #correct is shape of [n, div_area=4, iou=10]
             # Plot images
-            if plots and batch_i % (1280//batch_size) == 5:
+            if plots and batch_i % (2560//batch_size) == 0:
             # if plots and random.randint(1, 100) < 20 if len(pbar)>10 else 100:
                 plot_tar = targets
                 plot_pred = output_to_target(out)
@@ -1692,7 +1064,7 @@ def val(data,
         for i, c in enumerate(ap_class):
             maps[c] = ap[i, 0]
     else:
-        p, r, mp, mr, map50, map = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        p, r, mp, mr, map50, map = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
         print_log('none labels', logger)
         maps = np.zeros(nc) + map
 

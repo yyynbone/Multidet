@@ -7,7 +7,8 @@ import time
 import torch
 import torch.nn as nn
 import numpy as np
-
+import math
+from utils import Annotator
 
 def autopad(k, p=None, d=1):  # kernel, padding, dilation
     # Pad to 'same' shape outputs
@@ -150,7 +151,7 @@ class Model(nn.Module):
     def __init__(self):
         super().__init__()
         anchors = [[8, 15, 18, 30, 25, 15], [32, 61, 62, 45, 59, 119], [116, 90, 156, 198, 373, 326]]
-        self.layers = [Conv(1, 32, k=6, s=2, p=2),  # 0-p1/2
+        self.layers = [Conv(3, 32, k=6, s=2, p=2),  # 0-p1/2
                        Conv(32, 64, k=3, s=2),  #1-p2/4
                        C3(64, 64, n=2),
                        Conv(64, 128, k=3, s=2),  # 3-p3/8
@@ -172,7 +173,7 @@ class Model(nn.Module):
                        Concat(),  # cat [-1,4], backbone p3
                        C3(256, 128, n=2, shortcut=False),
 
-                       Detect(nc=5, ch=(128, 256, 512), anchors=anchors),
+                       Detect(nc=4, ch=(128, 256, 512), anchors=anchors),
                        ]
         self.cat_index = [(-1,6), (-1,4),(19,15,11)]
         self.save_index = set([ind for inds in self.cat_index for ind in inds if ind!=-1])
@@ -211,7 +212,7 @@ def convert_model():
 def convert_statedict():
     from utils import intersect_dicts
     device = 'cpu'
-    weight = '../results/train/228/zjdet_neck/exp/weights/best.pt'
+    weight = '../results/train/drone/zjdet_neck/exp2/weights/best.pt'
     model = Model().to(device)
     ckpt = torch.load(weight, device)
     csd = ckpt['model'].float().state_dict()
@@ -220,31 +221,79 @@ def convert_statedict():
     # print(csd)
     model.load_state_dict(csd, strict=False)
     print(f'Transferred {len(csd)}/{len(model.state_dict())} items from {weight}')
-    torch.save(model.state_dict(), '../model_statedict.pt', _use_new_zipfile_serialization=False)
+    torch.save(model.state_dict(), '../drone_model_statedict.pt', _use_new_zipfile_serialization=False)
+def draw_box(im, box, label, color=(0, 0, 255), txt_color=(255, 255, 255)):
+    lw = max(round(sum(im.shape) / 2 * 0.003), 2)
+    p1, p2 = (int(box[0]), int(box[1])), (int(box[2]), int(box[3]))
+    cv2.rectangle(im, p1, p2, color, thickness=lw, lineType=cv2.LINE_AA)
+    if label:
+        tf = max(lw - 1, 1)  # font thickness
+        w, h = cv2.getTextSize(label, 0, fontScale=lw / 3, thickness=tf)[0]  # text width, height
+        outside = p1[1] - h - 3 >= 0  # label fits outside box
+        p2 = p1[0] + w, p1[1] - h - 3 if outside else p1[1] + h + 3
+        cv2.rectangle(im, p1, p2, color, -1, cv2.LINE_AA)  # filled
+        cv2.putText(im, label, (p1[0], p1[1] - 2 if outside else p1[1] + h + 2), 0, lw / 3, txt_color,
+                    thickness=tf, lineType=cv2.LINE_AA)
+    return  im
 
 if __name__ == '__main__':
     device = 'cpu'
 
     # convert_model()
-    convert_statedict()
-    weight = '../model_statedict.pt'
+    # convert_statedict()
+    weight = '../drone_model_statedict.pt'
     state_dict = torch.load(weight, device)
     model = Model()
     model.load_state_dict(state_dict, strict=False)
     model.eval()
-    im = torch.zeros(1, 1, 128, 128)
-    img_path = '../04_vnir_1_2.jpg'
+    im = torch.zeros(1, 3, 540, 960)
+    img_path = '../results/val/drone/zjdet_neck_exp2_best/exp/images/0000007_04999_d_0000036-400_1360_225_765.jpg'
+    bgr = True
     import cv2
-    img = cv2.imread(img_path, 0)
-    im[0] = torch.tensor(img[:, :][None]/255.)
+    if not bgr:
+        img = cv2.imread(img_path, 0)
+        im[0] = torch.tensor(img[:, :][None]/255.)
+    else:
+        img = cv2.imread(img_path)
+        im[0] = torch.tensor(img.transpose(2,0,1)/ 255.)
     start = time.time()
 
     pred = model(im)
     print(pred.size())
     from utils import non_max_suppression
-    pred = non_max_suppression(pred, 0.1, 0.6,  None,  False, 1000)
+    pred = non_max_suppression(pred, 0.4, 0.7,  None,  False, 1000)
+    # last conf filter
+    # pred = [det[det[..., 4] >= 0.5] for det in pred]
     print(pred)
     end = time.time()
     print("####################")
-    print('inference cost per image of (128,128) %.2f ms'%((end-start)/20/16*1E3))
+    print(f'inference cost per image of {im.shape} %.2f ms'%((end-start)/20/16*1E3))
     print('done')
+    names = [ 'car', 'van', 'truck', 'bus']
+    # plot
+    for i, det in enumerate(pred):  # per image
+        if len(det):
+            # Rescale boxes from img_size to im0 size
+            # det[:, :4] = scale_coords(im.shape[2:], det[:, :4], im0.shape).round()
+            # Print results
+            for c in det[:, -1].unique():
+                n = (det[:, -1] == c).sum()  # detections per class
+
+            # Write results
+            for *xyxy, conf, cls in reversed(det):
+                # if save_txt:  # Write to file
+                #     xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
+                #     line = (cls, *xywh, conf) if save_conf else (cls, *xywh)  # label format
+                #     with open(txt_path + '.txt', 'a') as f:
+                #         f.write(('%g ' * len(line)).rstrip() % line + '\n')
+
+
+                c = int(cls)  # integer class
+                label = (f'{names[c]} {conf:.1f}')
+                img = draw_box(img, xyxy,label)
+
+
+        cv2.imshow('result', img)
+        cv2.waitKey(0)  # 1 millisecond
+
+

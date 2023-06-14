@@ -1,0 +1,408 @@
+# Parameters
+
+width_multiple: 1.  # layer channel multiple
+
+width_layer: [Conv, BasicBlock, MultiDecoder, YOLOv8Detect]
+
+# YOLOv8  backbone
+backbone:
+  [
+   [-1, Conv, [64, 3, 1]],  # 0-P1
+   [-1, Conv, [64, 128, 3, 2]],  # 1-P2/2
+   [-1, BasicBlock, [128, 128, 3]],
+   [-1, Conv, [128, 256, 3, 2]],  # 3-P3/4
+   [-1, BasicBlock, [256, 256, 3]],
+   [-1, Conv, [256, 512, 3, 2]],  # 5-P4/8
+   [-1, BasicBlock, [512, 512, 3]],
+   [-1, Conv, [512, 1024, 3, 2]],  # 7-P4/16
+   [-1, BasicBlock, [1024, 1024, 3]],
+  ]
+
+# YOLOv8
+neck:
+  [
+#   [-1, nn.Upsample, [None, 2, 'bilinear']],  #9
+#   [-1, Conv, [1024, 64,  3, 1]], #10
+#   [6, Conv, [512, 64,  3, 1]]
+#   [4, Poolconv, [256, 64, 2]]
+#   [2, Poolconv, [128, 64, 4]]
+#   [0, Poolconv, [64, 64, 8]]
+#   [[10, 11, 12, 13, 14], Mulcat, [1]],  # cat backbone P3
+
+   [[-1, 6, 4, 2, 0], MultiDecoder, [[1024, 512, 256, 128, 64], 64, 1,  'bilinear']],
+
+
+   [[8, -1, 4,  2, 0], MultiDecoder, [[1024, 320, 256, 128, 64], 64, 2,  'bilinear']],
+
+
+   [[8, 9, -1,  2, 0], MultiDecoder, [[1024, 320, 320, 128, 64], 64, 3,  'bilinear']],
+
+
+   [[8, 9, 10,  -1, 0], MultiDecoder, [[1024, 320, 320, 320, 64], 64, 4,  'bilinear']],
+
+  ]
+head:
+  [
+   [[9, 10, 11, 12], YOLOv8Detect, [[320, 320, 320, 320], nc]],# Detect(P3, P4, P5)
+  ]
+# from               n    params  module                                  arguments
+#  0                -1      1856  models.layers.common_layer.Conv         [3, 64, 3, 1]
+#  1                -1     73984  models.layers.common_layer.Conv         [64, 128, 3, 2]
+#  2                -1    295424  models.layers.resnet_layer.BasicBlock   [128, 128, 3]
+#  3                -1    295424  models.layers.common_layer.Conv         [128, 256, 3, 2]
+#  4                -1   1180672  models.layers.resnet_layer.BasicBlock   [256, 256, 3]
+#  5                -1   1180672  models.layers.common_layer.Conv         [256, 512, 3, 2]
+#  6                -1   4720640  models.layers.resnet_layer.BasicBlock   [512, 512, 3]
+#  7                -1   4720640  models.layers.common_layer.Conv         [512, 1024, 3, 2]
+#  8                -1  18878464  models.layers.resnet_layer.BasicBlock   [1024, 1024, 3]
+#  9  [-1, 6, 4, 2, 0]   1143424  models.layers.unet_layer.MultiDecoder   [[1024, 512, 256, 128, 64], 64, 1, 'bilinear']
+# 10  [8, -1, 4, 2, 0]   1032832  models.layers.unet_layer.MultiDecoder   [[1024, 320, 256, 128, 64], 64, 2, 'bilinear']
+# 11  [8, 9, -1, 2, 0]   1069696  models.layers.unet_layer.MultiDecoder   [[1024, 320, 320, 128, 64], 64, 3, 'bilinear']
+# 12 [8, 9, 10, -1, 0]   1180288  models.layers.unet_layer.MultiDecoder   [[1024, 320, 320, 320, 64], 64, 4, 'bilinear']
+#C:\Users\ZJLab\anaconda3\envs\mmlab\lib\site-packages\torch\nn\functional.py:780: UserWarning: Note that order of the arguments: ceil_mode and return_indices will changeto match the args list in nn.MaxPool2d in a future release.
+#  warnings.warn("Note that order of the arguments: ceil_mode and return_indices will change"
+#Model Summary: 190layers, 35774016 parameters, 35774016 gradients,image size is (640, 640), 1580.9 GFLOPs in cpu
+# time (ms)     GFLOPs     params                                    module                       input_size
+#      2.00     2.0722       1856  models.layers.common_layer.Conv           torch.Size([1, 3, 544, 960])
+#      1.50    19.3855      73984  models.layers.common_layer.Conv           torch.Size([1, 64, 544, 960])
+#      3.90    77.2748     295424  models.layers.resnet_layer.BasicBlock     torch.Size([1, 128, 272, 480])
+#      4.20    19.3187     295424  models.layers.common_layer.Conv           torch.Size([1, 128, 272, 480])
+#      3.05    77.1411    1180672  models.layers.resnet_layer.BasicBlock     torch.Size([1, 256, 136, 240])
+#      0.90    19.2853    1180672  models.layers.common_layer.Conv           torch.Size([1, 256, 136, 240])
+#      3.00    77.0743    4720640  models.layers.resnet_layer.BasicBlock     torch.Size([1, 512, 68, 120])
+#      0.80    19.2686    4720640  models.layers.common_layer.Conv           torch.Size([1, 512, 68, 120])
+#      2.95    77.0408   18878464  models.layers.resnet_layer.BasicBlock     torch.Size([1, 1024, 34, 60])
+#      2.40    18.8550    1143424  models.layers.unet_layer.MultiDecoder     [torch.Size([1, 1024, 34, 60]), torch.Size([1, 512, 68, 120]), torch.Size([1, 256, 136, 240]), torch.Size([1, 128, 272, 480]), torch.Size([1, 64, 544, 960])]
+#      6.45    68.4302    1032832  models.layers.unet_layer.MultiDecoder     [torch.Size([1, 1024, 34, 60]), torch.Size([1, 320, 68, 120]), torch.Size([1, 256, 136, 240]), torch.Size([1, 128, 272, 480]), torch.Size([1, 64, 544, 960])]
+#     21.61   284.2657    1069696  models.layers.unet_layer.MultiDecoder     [torch.Size([1, 1024, 34, 60]), torch.Size([1, 320, 68, 120]), torch.Size([1, 320, 136, 240]), torch.Size([1, 128, 272, 480]), torch.Size([1, 64, 544, 960])]
+#     94.03  1256.2504    1180288  models.layers.unet_layer.MultiDecoder     [torch.Size([1, 1024, 34, 60]), torch.Size([1, 320, 68, 120]), torch.Size([1, 320, 136, 240]), torch.Size([1, 320, 272, 480]), torch.Size([1, 64, 544, 960])]
+#Model(
+#  35.774 M, 100.000% Params, 994.281 GFLOPs, 100.000% FLOPs,
+#  (model): Sequential(
+#    35.774 M, 100.000% Params, 994.281 GFLOPs, 100.000% FLOPs,
+#    (0): Conv(
+#      0.002 M, 0.005% Params, 0.969 GFLOPs, 0.097% FLOPs,
+#      (conv): Conv2d(0.002 M, 0.005% Params, 0.902 GFLOPs, 0.091% FLOPs, 3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#      (bn): BatchNorm2d(0.0 M, 0.000% Params, 0.067 GFLOPs, 0.007% FLOPs, 64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#      (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#    )
+#    (1): Conv(
+#      0.074 M, 0.207% Params, 9.659 GFLOPs, 0.971% FLOPs,
+#      (conv): Conv2d(0.074 M, 0.206% Params, 9.626 GFLOPs, 0.968% FLOPs, 64, 128, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+#      (bn): BatchNorm2d(0.0 M, 0.001% Params, 0.033 GFLOPs, 0.003% FLOPs, 128, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#      (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#    )
+#    (2): BasicBlock(
+#      0.295 M, 0.826% Params, 38.604 GFLOPs, 3.883% FLOPs,
+#      (conv1): ReluConv(
+#        0.148 M, 0.413% Params, 19.302 GFLOPs, 1.941% FLOPs,
+#        (conv): Conv(
+#          0.148 M, 0.413% Params, 19.302 GFLOPs, 1.941% FLOPs,
+#          (conv): Conv2d(0.147 M, 0.412% Params, 19.252 GFLOPs, 1.936% FLOPs, 128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#          (bn): BatchNorm2d(0.0 M, 0.001% Params, 0.033 GFLOPs, 0.003% FLOPs, 128, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#          (act): ReLU(0.0 M, 0.000% Params, 0.017 GFLOPs, 0.002% FLOPs, inplace=True)
+#        )
+#      )
+#      (conv2): Conv(
+#        0.148 M, 0.413% Params, 19.285 GFLOPs, 1.940% FLOPs,
+#        (conv): Conv2d(0.147 M, 0.412% Params, 19.252 GFLOPs, 1.936% FLOPs, 128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#        (bn): BatchNorm2d(0.0 M, 0.001% Params, 0.033 GFLOPs, 0.003% FLOPs, 128, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#        (act): Identity(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, )
+#      )
+#      (relu): ReLU(0.0 M, 0.000% Params, 0.017 GFLOPs, 0.002% FLOPs, inplace=True)
+#    )
+#    (3): Conv(
+#      0.295 M, 0.826% Params, 9.643 GFLOPs, 0.970% FLOPs,
+#      (conv): Conv2d(0.295 M, 0.824% Params, 9.626 GFLOPs, 0.968% FLOPs, 128, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+#      (bn): BatchNorm2d(0.001 M, 0.001% Params, 0.017 GFLOPs, 0.002% FLOPs, 256, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#      (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#    )
+#    (4): BasicBlock(
+#      1.181 M, 3.300% Params, 38.554 GFLOPs, 3.878% FLOPs,
+#      (conv1): ReluConv(
+#        0.59 M, 1.650% Params, 19.277 GFLOPs, 1.939% FLOPs,
+#        (conv): Conv(
+#          0.59 M, 1.650% Params, 19.277 GFLOPs, 1.939% FLOPs,
+#          (conv): Conv2d(0.59 M, 1.649% Params, 19.252 GFLOPs, 1.936% FLOPs, 256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#          (bn): BatchNorm2d(0.001 M, 0.001% Params, 0.017 GFLOPs, 0.002% FLOPs, 256, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#          (act): ReLU(0.0 M, 0.000% Params, 0.008 GFLOPs, 0.001% FLOPs, inplace=True)
+#        )
+#      )
+#      (conv2): Conv(
+#        0.59 M, 1.650% Params, 19.269 GFLOPs, 1.938% FLOPs,
+#        (conv): Conv2d(0.59 M, 1.649% Params, 19.252 GFLOPs, 1.936% FLOPs, 256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#        (bn): BatchNorm2d(0.001 M, 0.001% Params, 0.017 GFLOPs, 0.002% FLOPs, 256, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#        (act): Identity(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, )
+#      )
+#      (relu): ReLU(0.0 M, 0.000% Params, 0.008 GFLOPs, 0.001% FLOPs, inplace=True)
+#    )
+#    (5): Conv(
+#      1.181 M, 3.300% Params, 9.634 GFLOPs, 0.969% FLOPs,
+#      (conv): Conv2d(1.18 M, 3.297% Params, 9.626 GFLOPs, 0.968% FLOPs, 256, 512, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+#      (bn): BatchNorm2d(0.001 M, 0.003% Params, 0.008 GFLOPs, 0.001% FLOPs, 512, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#      (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#    )
+#    (6): BasicBlock(
+#      4.721 M, 13.196% Params, 38.529 GFLOPs, 3.875% FLOPs,
+#      (conv1): ReluConv(
+#        2.36 M, 6.598% Params, 19.264 GFLOPs, 1.938% FLOPs,
+#        (conv): Conv(
+#          2.36 M, 6.598% Params, 19.264 GFLOPs, 1.938% FLOPs,
+#          (conv): Conv2d(2.359 M, 6.595% Params, 19.252 GFLOPs, 1.936% FLOPs, 512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#          (bn): BatchNorm2d(0.001 M, 0.003% Params, 0.008 GFLOPs, 0.001% FLOPs, 512, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#          (act): ReLU(0.0 M, 0.000% Params, 0.004 GFLOPs, 0.000% FLOPs, inplace=True)
+#        )
+#      )
+#      (conv2): Conv(
+#        2.36 M, 6.598% Params, 19.26 GFLOPs, 1.937% FLOPs,
+#        (conv): Conv2d(2.359 M, 6.595% Params, 19.252 GFLOPs, 1.936% FLOPs, 512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#        (bn): BatchNorm2d(0.001 M, 0.003% Params, 0.008 GFLOPs, 0.001% FLOPs, 512, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#        (act): Identity(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, )
+#      )
+#      (relu): ReLU(0.0 M, 0.000% Params, 0.004 GFLOPs, 0.000% FLOPs, inplace=True)
+#    )
+#    (7): Conv(
+#      4.721 M, 13.196% Params, 9.63 GFLOPs, 0.969% FLOPs,
+#      (conv): Conv2d(4.719 M, 13.190% Params, 9.626 GFLOPs, 0.968% FLOPs, 512, 1024, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+#      (bn): BatchNorm2d(0.002 M, 0.006% Params, 0.004 GFLOPs, 0.000% FLOPs, 1024, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#      (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#    )
+#    (8): BasicBlock(
+#      18.878 M, 52.771% Params, 38.516 GFLOPs, 3.874% FLOPs,
+#      (conv1): ReluConv(
+#        9.439 M, 26.386% Params, 19.258 GFLOPs, 1.937% FLOPs,
+#        (conv): Conv(
+#          9.439 M, 26.386% Params, 19.258 GFLOPs, 1.937% FLOPs,
+#          (conv): Conv2d(9.437 M, 26.380% Params, 19.252 GFLOPs, 1.936% FLOPs, 1024, 1024, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#          (bn): BatchNorm2d(0.002 M, 0.006% Params, 0.004 GFLOPs, 0.000% FLOPs, 1024, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#          (act): ReLU(0.0 M, 0.000% Params, 0.002 GFLOPs, 0.000% FLOPs, inplace=True)
+#        )
+#      )
+#      (conv2): Conv(
+#        9.439 M, 26.386% Params, 19.256 GFLOPs, 1.937% FLOPs,
+#        (conv): Conv2d(9.437 M, 26.380% Params, 19.252 GFLOPs, 1.936% FLOPs, 1024, 1024, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#        (bn): BatchNorm2d(0.002 M, 0.006% Params, 0.004 GFLOPs, 0.000% FLOPs, 1024, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#        (act): Identity(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, )
+#      )
+#      (relu): ReLU(0.0 M, 0.000% Params, 0.002 GFLOPs, 0.000% FLOPs, inplace=True)
+#    )
+#    (9): MultiDecoder(
+#      1.143 M, 3.196% Params, 9.397 GFLOPs, 0.945% FLOPs,
+#      (m): Sequential(
+#        1.143 M, 3.196% Params, 9.397 GFLOPs, 0.945% FLOPs,
+#        (0): Sequential(
+#          0.59 M, 1.649% Params, 4.822 GFLOPs, 0.485% FLOPs,
+#          (0): Upsample(0.0 M, 0.000% Params, 0.008 GFLOPs, 0.001% FLOPs, scale_factor=2.0, mode=bilinear)
+#          (1): Conv(
+#            0.59 M, 1.649% Params, 4.814 GFLOPs, 0.484% FLOPs,
+#            (conv): Conv2d(0.59 M, 1.649% Params, 4.813 GFLOPs, 0.484% FLOPs, 1024, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#            (bn): BatchNorm2d(0.0 M, 0.000% Params, 0.001 GFLOPs, 0.000% FLOPs, 64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#            (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#          )
+#        )
+#        (1): Conv(
+#          0.295 M, 0.825% Params, 2.408 GFLOPs, 0.242% FLOPs,
+#          (conv): Conv2d(0.295 M, 0.824% Params, 2.406 GFLOPs, 0.242% FLOPs, 512, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#          (bn): BatchNorm2d(0.0 M, 0.000% Params, 0.001 GFLOPs, 0.000% FLOPs, 64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#          (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#        )
+#        (2): PoolConv(
+#          0.148 M, 0.413% Params, 1.213 GFLOPs, 0.122% FLOPs,
+#          (p): MaxPool2d(0.0 M, 0.000% Params, 0.008 GFLOPs, 0.001% FLOPs, kernel_size=3, stride=2, padding=0, dilation=1, ceil_mode=True)
+#          (m): Conv(
+#            0.148 M, 0.413% Params, 1.204 GFLOPs, 0.121% FLOPs,
+#            (conv): Conv2d(0.147 M, 0.412% Params, 1.203 GFLOPs, 0.121% FLOPs, 256, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#            (bn): BatchNorm2d(0.0 M, 0.000% Params, 0.001 GFLOPs, 0.000% FLOPs, 64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#            (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#          )
+#        )
+#        (3): PoolConv(
+#          0.074 M, 0.206% Params, 0.619 GFLOPs, 0.062% FLOPs,
+#          (p): MaxPool2d(0.0 M, 0.000% Params, 0.017 GFLOPs, 0.002% FLOPs, kernel_size=3, stride=4, padding=0, dilation=1, ceil_mode=True)
+#          (m): Conv(
+#            0.074 M, 0.206% Params, 0.603 GFLOPs, 0.061% FLOPs,
+#            (conv): Conv2d(0.074 M, 0.206% Params, 0.602 GFLOPs, 0.061% FLOPs, 128, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#            (bn): BatchNorm2d(0.0 M, 0.000% Params, 0.001 GFLOPs, 0.000% FLOPs, 64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#            (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#          )
+#        )
+#        (4): PoolConv(
+#          0.037 M, 0.103% Params, 0.335 GFLOPs, 0.034% FLOPs,
+#          (p): MaxPool2d(0.0 M, 0.000% Params, 0.033 GFLOPs, 0.003% FLOPs, kernel_size=3, stride=8, padding=0, dilation=1, ceil_mode=True)
+#          (m): Conv(
+#            0.037 M, 0.103% Params, 0.302 GFLOPs, 0.030% FLOPs,
+#            (conv): Conv2d(0.037 M, 0.103% Params, 0.301 GFLOPs, 0.030% FLOPs, 64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#            (bn): BatchNorm2d(0.0 M, 0.000% Params, 0.001 GFLOPs, 0.000% FLOPs, 64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#            (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#          )
+#        )
+#      )
+#      (cat): Mulcat(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, )
+#    )
+#    (10): MultiDecoder(
+#      1.033 M, 2.887% Params, 33.806 GFLOPs, 3.400% FLOPs,
+#      (m): Sequential(
+#        1.033 M, 2.887% Params, 33.806 GFLOPs, 3.400% FLOPs,
+#        (0): Sequential(
+#          0.59 M, 1.649% Params, 19.289 GFLOPs, 1.940% FLOPs,
+#          (0): Upsample(0.0 M, 0.000% Params, 0.033 GFLOPs, 0.003% FLOPs, scale_factor=4.0, mode=bilinear)
+#          (1): Conv(
+#            0.59 M, 1.649% Params, 19.256 GFLOPs, 1.937% FLOPs,
+#            (conv): Conv2d(0.59 M, 1.649% Params, 19.252 GFLOPs, 1.936% FLOPs, 1024, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#            (bn): BatchNorm2d(0.0 M, 0.000% Params, 0.004 GFLOPs, 0.000% FLOPs, 64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#            (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#          )
+#        )
+#        (1): Sequential(
+#          0.184 M, 0.516% Params, 6.031 GFLOPs, 0.607% FLOPs,
+#          (0): Upsample(0.0 M, 0.000% Params, 0.01 GFLOPs, 0.001% FLOPs, scale_factor=2.0, mode=bilinear)
+#          (1): Conv(
+#            0.184 M, 0.516% Params, 6.02 GFLOPs, 0.606% FLOPs,
+#            (conv): Conv2d(0.184 M, 0.515% Params, 6.016 GFLOPs, 0.605% FLOPs, 320, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#            (bn): BatchNorm2d(0.0 M, 0.000% Params, 0.004 GFLOPs, 0.000% FLOPs, 64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#            (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#          )
+#        )
+#        (2): Conv(
+#          0.148 M, 0.413% Params, 4.817 GFLOPs, 0.484% FLOPs,
+#          (conv): Conv2d(0.147 M, 0.412% Params, 4.813 GFLOPs, 0.484% FLOPs, 256, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#          (bn): BatchNorm2d(0.0 M, 0.000% Params, 0.004 GFLOPs, 0.000% FLOPs, 64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#          (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#        )
+#        (3): PoolConv(
+#          0.074 M, 0.206% Params, 2.427 GFLOPs, 0.244% FLOPs,
+#          (p): MaxPool2d(0.0 M, 0.000% Params, 0.017 GFLOPs, 0.002% FLOPs, kernel_size=3, stride=2, padding=0, dilation=1, ceil_mode=True)
+#          (m): Conv(
+#            0.074 M, 0.206% Params, 2.411 GFLOPs, 0.242% FLOPs,
+#            (conv): Conv2d(0.074 M, 0.206% Params, 2.406 GFLOPs, 0.242% FLOPs, 128, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#            (bn): BatchNorm2d(0.0 M, 0.000% Params, 0.004 GFLOPs, 0.000% FLOPs, 64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#            (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#          )
+#        )
+#        (4): PoolConv(
+#          0.037 M, 0.103% Params, 1.241 GFLOPs, 0.125% FLOPs,
+#          (p): MaxPool2d(0.0 M, 0.000% Params, 0.033 GFLOPs, 0.003% FLOPs, kernel_size=3, stride=4, padding=0, dilation=1, ceil_mode=True)
+#          (m): Conv(
+#            0.037 M, 0.103% Params, 1.207 GFLOPs, 0.121% FLOPs,
+#            (conv): Conv2d(0.037 M, 0.103% Params, 1.203 GFLOPs, 0.121% FLOPs, 64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#            (bn): BatchNorm2d(0.0 M, 0.000% Params, 0.004 GFLOPs, 0.000% FLOPs, 64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#            (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#          )
+#        )
+#      )
+#      (cat): Mulcat(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, )
+#    )
+#    (11): MultiDecoder(
+#      1.07 M, 2.990% Params, 139.91 GFLOPs, 14.071% FLOPs,
+#      (m): Sequential(
+#        1.07 M, 2.990% Params, 139.91 GFLOPs, 14.071% FLOPs,
+#        (0): Sequential(
+#          0.59 M, 1.649% Params, 77.158 GFLOPs, 7.760% FLOPs,
+#          (0): Upsample(0.0 M, 0.000% Params, 0.134 GFLOPs, 0.013% FLOPs, scale_factor=8.0, mode=bilinear)
+#          (1): Conv(
+#            0.59 M, 1.649% Params, 77.024 GFLOPs, 7.747% FLOPs,
+#            (conv): Conv2d(0.59 M, 1.649% Params, 77.007 GFLOPs, 7.745% FLOPs, 1024, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#            (bn): BatchNorm2d(0.0 M, 0.000% Params, 0.017 GFLOPs, 0.002% FLOPs, 64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#            (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#          )
+#        )
+#        (1): Sequential(
+#          0.184 M, 0.516% Params, 24.123 GFLOPs, 2.426% FLOPs,
+#          (0): Upsample(0.0 M, 0.000% Params, 0.042 GFLOPs, 0.004% FLOPs, scale_factor=4.0, mode=bilinear)
+#          (1): Conv(
+#            0.184 M, 0.516% Params, 24.082 GFLOPs, 2.422% FLOPs,
+#            (conv): Conv2d(0.184 M, 0.515% Params, 24.065 GFLOPs, 2.420% FLOPs, 320, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#            (bn): BatchNorm2d(0.0 M, 0.000% Params, 0.017 GFLOPs, 0.002% FLOPs, 64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#            (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#          )
+#        )
+#        (2): Sequential(
+#          0.184 M, 0.516% Params, 24.123 GFLOPs, 2.426% FLOPs,
+#          (0): Upsample(0.0 M, 0.000% Params, 0.042 GFLOPs, 0.004% FLOPs, scale_factor=2.0, mode=bilinear)
+#          (1): Conv(
+#            0.184 M, 0.516% Params, 24.082 GFLOPs, 2.422% FLOPs,
+#            (conv): Conv2d(0.184 M, 0.515% Params, 24.065 GFLOPs, 2.420% FLOPs, 320, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#            (bn): BatchNorm2d(0.0 M, 0.000% Params, 0.017 GFLOPs, 0.002% FLOPs, 64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#            (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#          )
+#        )
+#        (3): Conv(
+#          0.074 M, 0.206% Params, 9.643 GFLOPs, 0.970% FLOPs,
+#          (conv): Conv2d(0.074 M, 0.206% Params, 9.626 GFLOPs, 0.968% FLOPs, 128, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#          (bn): BatchNorm2d(0.0 M, 0.000% Params, 0.017 GFLOPs, 0.002% FLOPs, 64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#          (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#        )
+#        (4): PoolConv(
+#          0.037 M, 0.103% Params, 4.863 GFLOPs, 0.489% FLOPs,
+#          (p): MaxPool2d(0.0 M, 0.000% Params, 0.033 GFLOPs, 0.003% FLOPs, kernel_size=3, stride=2, padding=0, dilation=1, ceil_mode=True)
+#          (m): Conv(
+#            0.037 M, 0.103% Params, 4.83 GFLOPs, 0.486% FLOPs,
+#            (conv): Conv2d(0.037 M, 0.103% Params, 4.813 GFLOPs, 0.484% FLOPs, 64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#            (bn): BatchNorm2d(0.0 M, 0.000% Params, 0.017 GFLOPs, 0.002% FLOPs, 64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#            (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#          )
+#        )
+#      )
+#      (cat): Mulcat(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, )
+#    )
+#    (12): MultiDecoder(
+#      1.18 M, 3.299% Params, 617.43 GFLOPs, 62.098% FLOPs,
+#      (m): Sequential(
+#        1.18 M, 3.299% Params, 617.43 GFLOPs, 62.098% FLOPs,
+#        (0): Sequential(
+#          0.59 M, 1.649% Params, 308.631 GFLOPs, 31.041% FLOPs,
+#          (0): Upsample(0.0 M, 0.000% Params, 0.535 GFLOPs, 0.054% FLOPs, scale_factor=16.0, mode=bilinear)
+#          (1): Conv(
+#            0.59 M, 1.649% Params, 308.097 GFLOPs, 30.987% FLOPs,
+#            (conv): Conv2d(0.59 M, 1.649% Params, 308.03 GFLOPs, 30.980% FLOPs, 1024, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#            (bn): BatchNorm2d(0.0 M, 0.000% Params, 0.067 GFLOPs, 0.007% FLOPs, 64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#            (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#          )
+#        )
+#        (1): Sequential(
+#          0.184 M, 0.516% Params, 96.493 GFLOPs, 9.705% FLOPs,
+#          (0): Upsample(0.0 M, 0.000% Params, 0.167 GFLOPs, 0.017% FLOPs, scale_factor=8.0, mode=bilinear)
+#          (1): Conv(
+#            0.184 M, 0.516% Params, 96.326 GFLOPs, 9.688% FLOPs,
+#            (conv): Conv2d(0.184 M, 0.515% Params, 96.259 GFLOPs, 9.681% FLOPs, 320, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#            (bn): BatchNorm2d(0.0 M, 0.000% Params, 0.067 GFLOPs, 0.007% FLOPs, 64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#            (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#          )
+#        )
+#        (2): Sequential(
+#          0.184 M, 0.516% Params, 96.493 GFLOPs, 9.705% FLOPs,
+#          (0): Upsample(0.0 M, 0.000% Params, 0.167 GFLOPs, 0.017% FLOPs, scale_factor=4.0, mode=bilinear)
+#          (1): Conv(
+#            0.184 M, 0.516% Params, 96.326 GFLOPs, 9.688% FLOPs,
+#            (conv): Conv2d(0.184 M, 0.515% Params, 96.259 GFLOPs, 9.681% FLOPs, 320, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#            (bn): BatchNorm2d(0.0 M, 0.000% Params, 0.067 GFLOPs, 0.007% FLOPs, 64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#            (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#          )
+#        )
+#        (3): Sequential(
+#          0.184 M, 0.516% Params, 96.493 GFLOPs, 9.705% FLOPs,
+#          (0): Upsample(0.0 M, 0.000% Params, 0.167 GFLOPs, 0.017% FLOPs, scale_factor=2.0, mode=bilinear)
+#          (1): Conv(
+#            0.184 M, 0.516% Params, 96.326 GFLOPs, 9.688% FLOPs,
+#            (conv): Conv2d(0.184 M, 0.515% Params, 96.259 GFLOPs, 9.681% FLOPs, 320, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#            (bn): BatchNorm2d(0.0 M, 0.000% Params, 0.067 GFLOPs, 0.007% FLOPs, 64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#            (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#          )
+#        )
+#        (4): Conv(
+#          0.037 M, 0.103% Params, 19.319 GFLOPs, 1.943% FLOPs,
+#          (conv): Conv2d(0.037 M, 0.103% Params, 19.252 GFLOPs, 1.936% FLOPs, 64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+#          (bn): BatchNorm2d(0.0 M, 0.000% Params, 0.067 GFLOPs, 0.007% FLOPs, 64, eps=0.001, momentum=0.03, affine=True, track_running_stats=True)
+#          (act): SiLU(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, inplace=True)
+#        )
+#      )
+#      (cat): Mulcat(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, )
+#    )
+#  )
+#)
+#==============================
+#Input shape: (3, 544, 960)
+#Flops: 994.28 GFLOPs
+#Params: 35.77 M
+#==============================
+#==============================

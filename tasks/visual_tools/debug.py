@@ -10,6 +10,7 @@ import time
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from contextlib import contextmanager
+import numpy as np
 
 def dist_test(local_rank, node=0, local_size=8, addr='localhost', port=55555, world_size=8):
     i = 0

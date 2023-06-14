@@ -145,6 +145,7 @@ def main(opt):
                                           )
 
             dataset.cropped_imgsz = getattr(opt, "val_cropped_imgsz", False)
+            dataset.slide_crop = getattr(opt, "slide_crop", False)
             # dataset.index_shuffle()
             batch_size = min(opt.batch_size, len(dataset))
             opt.dataloader = SuffleLoader(dataset,

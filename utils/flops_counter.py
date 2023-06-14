@@ -596,3 +596,15 @@ def get_modules_mapping() -> Dict:
         # Deconvolution
         nn.ConvTranspose2d: deconv_flops_counter_hook,
     }
+
+
+if __name__ == '__main__':
+    model = ''
+    input_shape = (3, 640, 640)
+    flops, params = get_model_complexity_info(model, input_shape)
+    split_line = '=' * 30
+    print(f'{split_line}\nInput shape: {input_shape}\n'
+          f'Flops: {flops}\nParams: {params}\n{split_line}')   # GMac , 1 GMac = 2GFLOPs
+    print('!!!Please be cautious if you use the results in papers. '
+          'You may need to check if all ops are supported and verify that the '
+          'flops computation is correct.')

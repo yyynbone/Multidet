@@ -1,4 +1,5 @@
 from multiprocessing.pool import Pool
+import os
 import torch
 import random
 import numpy as np
@@ -10,7 +11,7 @@ from tqdm import tqdm
 from pathlib import Path
 import shutil
 
-from dataloader.load import select_image, select_video, load_images, load_labels, load_image_result, \
+from dataloader.load import select_image, select_video, load_results, load_labels, initial_result, \
     rect_shape, load_mosaic, read_image, load_big2_small
 
 from dataloader.transform import Transfrom, gray
@@ -57,7 +58,7 @@ class SuffleLoader(DataLoader):
         super().__init__(*args, **kwargs)
         self.__initialized = False
 
-    def shuffle_index(self, local_rank):
+    def shuffle_index(self):
         # # object.__setattr__(self, 'dataset', dataset)
         #
         # self.sampler.data_source = dataset
@@ -75,8 +76,7 @@ class SuffleLoader(DataLoader):
         # else:
         #     self.num_samples = math.ceil(len(self.dataset) / self.num_replicas)
         # self.total_size = self.num_samples * self.num_replicas
-        with torch_distributed_zero_first(local_rank):
-            self.dataset.index_shuffle(rank=local_rank)
+        self.dataset.index_shuffle()
         if isinstance(self.sampler, SuffleDist_Sample):
             self.sampler.shuffle_index()
             # self.batch_size = min(self.batch_size, len(self.dataset))  # ValueError: batch_size attribute should not be set after SuffleLoader is initialized
@@ -99,10 +99,38 @@ class SuffleDist_Sample(distributed.DistributedSampler):
         else:
             self.num_samples = math.ceil(len(self.dataset) / self.num_replicas)  # type: ignore[arg-type]
         self.total_size = self.num_samples * self.num_replicas
+        
+    def __iter__(self):
+        if self.shuffle:
+            # deterministically shuffle based on epoch and seed
+            g = torch.Generator()
+            g.manual_seed(self.seed + self.epoch)
+            indices = torch.randperm(len(self.dataset), generator=g).tolist()  # type: ignore[arg-type]   # 这里使得indices统一，在dataset里的shuffle没有用
+        else:
+            indices = list(range(len(self.dataset)))  # type: ignore[arg-type]
+
+        if not self.drop_last:
+            # add extra samples to make it evenly divisible
+            padding_size = self.total_size - len(indices)
+            if padding_size <= len(indices):
+                indices += indices[:padding_size]
+            else:
+                indices += (indices * math.ceil(padding_size / len(indices)))[:padding_size]
+        else:
+            # remove tail of data to make it evenly divisible.
+            indices = indices[:self.total_size]
+        assert len(indices) == self.total_size
+        # print(f"before dist indices is: {indices[:10]}, the 5 data is {self.dataset.results[indices[5]]['filename']}, "
+        #       f"data and indice length is {len(self.dataset.results)} and {len(self.dataset)},in rank {self.rank}")
+        # subsample
+        indices = indices[self.rank:self.total_size:self.num_replicas]
+        assert len(indices) == self.num_samples
+
+        return iter(indices)
 
 
 
-def get_dataset(path, pre_process, img_size=640, batch_size=16, logger=None, image_weights=False,
+def get_dataset(path, pre_process, img_size=640, logger=None, image_weights=False,
             single_cls=False, stride=32, pad=0.0, prefix='', bgr=True, filter_str='', select_class=(),
              filter_bkg=False):
     if isinstance(img_size, int):
@@ -117,14 +145,13 @@ def get_dataset(path, pre_process, img_size=640, batch_size=16, logger=None, ima
 
     pre_process['rect'] = rect
     pre_process['augment'] = augment
+    origin_sample = 1.
 
-
-
-    img_files = select_image(path, filter_str=filter_str, remove_str='_mask', sample=1, bg_gain=1, obj_gain=1)
+    img_files = select_image(path, filter_str=filter_str, remove_str='_mask', sample=origin_sample, bg_gain=1, obj_gain=1)
     assert img_files, f'{prefix}No images found'
     print_log(f'{prefix}now we found {len(img_files)} images in  dataset', logger)
 
-    results = load_images(img_files, img_size=img_size)
+    results = load_results(img_files, img_size=img_size)
 
     # cache_path = (p if p.is_file() else Path(self.label_files[0]).parent).with_suffix('.cache')
     # try:
@@ -141,11 +168,12 @@ def get_dataset(path, pre_process, img_size=640, batch_size=16, logger=None, ima
                 result['labels'][:, 0] = 0
                 if result['instance_segments'] is not None:
                     result['instance_segments'][:, 0] = 0
-        if rect:
-            results = rect_shape(results, img_size, pad, stride, batch_size)
+
     pre_process['img_size'] = img_size
     pre_process['mosaic'] = pre_process.get('mosaic', 0.3) if augment and not rect else 0 # load 4 images at a time into a mosaic (only during training)
     pre_process["gray"] = not bgr
+    pre_process["pad"] = pad
+    pre_process["stride"] = stride
     results[0]['select_class'] = select_class
     return results, pre_process
 
@@ -157,118 +185,9 @@ def filter_pix(labels,pix_area):
 
 class LoadImagesAndLabels(Dataset):
     #  loads images and labels for training and validation
-    """
-    def __init__(self, path,  img_size=640, batch_size=16, logger=None, augment=False, hyp=None, rect=False, image_weights=False,
-                single_cls=False, stride=32, pad=0.0, prefix='',is_bgr=True, filter_str='', select_class=(),
-                 filter_bkg=False):
-        if isinstance(img_size, int):
-            img_size = (img_size, img_size)   # h, w
-        elif len(img_size)==1:
-            img_size = (img_size[0], img_size[0])
-        else:
-            # img_size is (w,h) ,now we convert to (h,w)
-            img_size = tuple((img_size[1], img_size[0]))
 
-
-        if is_bgr:
-            hyp['to_gray'] = 0
-        else:
-            hyp['to_gray'] = 1
-        self.hyp = hyp
-        rect = False if image_weights else rect
-        self.mosaic = augment and not rect  # load 4 images at a time into a mosaic (only during training)
-
-        # select sample randomly
-        portion = 1
-        if hyp is not None:
-            if 'train' in prefix:
-                portion = hyp.get('train_sample_portion', 1)
-            elif 'val' in prefix:
-                portion = hyp.get('val_sample_portion', 1)
-        self.img_files = select_image(path, filter_str=filter_str, sample=portion, bg_gain=1, obj_gain=1)
-        assert self.img_files, f'{prefix}No images found'
-        print_log(f'now we found {len(self.img_files)} images in dataset', logger)
-
-        results = load_images(self.img_files, img_size=img_size)
-        results = load_labels(results, select_class=select_class, prefix=prefix, filter_bkg=filter_bkg, logger=logger)
-        if single_cls:
-            for result in results:
-                result['labels'][:, 0] = 0
-                if result['instance_segments'] is not None:
-                    result['instance_segments'][:, 0] = 0
-        if rect:
-            results = rect_shape(results, pad, stride, batch_size)
-
-        results =  transforms(results, hyp=hyp, augment=augment, logger=logger)
-
-        self.results = results
-
-        self.indices = list(range(len(self.results)))
-        random.shuffle(self.indices)
-        self.labels = [result['labels'] for result in results]
-
-    def __init__(self, path, pre_process, img_size=640, batch_size=16, logger=None, image_weights=False,
-        single_cls=False, stride=32, pad=0.0, prefix='',bgr=True, filter_str='', select_class=(),
-         filter_bkg=False, bkg_ratio=0, **kwargs):
-        if isinstance(img_size, int):
-            img_size = (img_size, img_size)   # h, w
-        elif len(img_size)==1:
-            img_size = (img_size[0], img_size[0])
-        # else:
-        #     # img_size is (w,h) ,now we convert to (h,w)
-        #     img_size = tuple((img_size[1], img_size[0]))
-        self.img_size = img_size
-        self.gray = not bgr
-        rect = False if image_weights else pre_process.get('rect', False)
-        self.mask_labels = pre_process.get('mask_label', False)
-        augment = pre_process.get('augment', False)
-        self.mosaic = augment and not rect  # load 4 images at a time into a mosaic (only during training)
-        self.mosaic_p = pre_process.get('mosaic', 0)
-        pre_process['rect'] = rect
-        pre_process['augment'] = augment
-
-        # select sample randomly
-        portion = pre_process.get('sample_portion', 1)
-
-        self.img_files = select_image(path, filter_str=filter_str, sample=portion, bg_gain=1, obj_gain=1)
-        assert self.img_files, f'{prefix}No images found'
-        print_log(f'now we found {len(self.img_files)} images in dataset', logger)
-
-        results = load_images(self.img_files, img_size=img_size)
-
-        # cache_path = (p if p.is_file() else Path(self.label_files[0]).parent).with_suffix('.cache')
-        # try:
-        #     np.save(path, results)  # save cache for next time
-        #     path.with_suffix('.cache.npy').rename(path)  # remove .npy suffix
-        #     print_log(f'{prefix}New cache created: {path}', logger)
-        # except Exception as e:
-        #     print_log(f'{prefix}WARNING: Cache directory {path.parent} is not writeable: {e}', logger)  # not writeable
-
-        if pre_process.get('label', True):
-            results = load_labels(results, select_class=select_class, prefix=prefix, filter_bkg=filter_bkg, logger=logger)
-            if single_cls:
-                for result in results:
-                    result['labels'][:, 0] = 0
-                    if result['instance_segments'] is not None:
-                        result['instance_segments'][:, 0] = 0
-            if rect:
-                results = rect_shape(results, pad, stride, batch_size)
-            self.labels = [result['labels'] for result in results]
-
-        self.T = Transfrom(pre_process, logger)
-        # for result in results:
-        #     self.T(result)
-        #     labels = result['labels']
-        #     if labels is not None:
-        #         result['wh'] = np.vstack([labels[:, 3] - labels[:, 1], labels[:, 4] - labels[:, 2]]).T
-
-        self.results = results
-        self.indices = list(range(len(self.results)))
-        random.shuffle(self.indices)
-        self.bkg_ratio = bkg_ratio
-    """
-    def __init__(self, pre_process, results, logger=None, bkg_ratio=0, obj_mask=0, cropped_imgsz=False,
-                 obj_repeat=1, bg_repeat=1, iou_thres=0.4, pix_thres=1, slide_crop=False, sample_portion=1, pix_area=None):
+    def __init__(self, pre_process, results, batch_size=32, local_rank=-1,logger=None, bkg_ratio=0, obj_mask=0, cropped_imgsz=False,
+                 obj_repeat=1, bg_repeat=1, iou_thres=0.4, pix_thres=1, slide_crop=False, repeat_crop=False, sample_portion=1, crop_portion=1, pix_area=None):
 
         self.mask_labels = pre_process.get('mask_label', False)
         self.mosaic = pre_process.get('mosaic', 0)
@@ -277,15 +196,7 @@ class LoadImagesAndLabels(Dataset):
         self.imgsz =  pre_process['img_size']
         self.p = Path(results[0]['filename']).parents[1]
         self.select_class = results[0]['select_class']
-
-
-        if pre_process.get('label', False):
-            for result in results:
-                result['labels'] = filter_pix(result['labels'], pix_area)
-            self.labels = [result['labels'] for result in results]
-            label_num = np.array([len(l) for l in self.labels])
-            self.obj_index = np.where(label_num > 0)[0]
-            self.bkg_index = np.where(label_num == 0)[0]
+        self.rank = local_rank
 
         self.T = Transfrom(pre_process, logger)
         # for result in results:
@@ -309,9 +220,32 @@ class LoadImagesAndLabels(Dataset):
         self.iou_thres = iou_thres
         self.pix_thres = pix_thres
         self.slide_crop = slide_crop
+        self.repeat_crop = (not slide_crop) and repeat_crop
         self.portion = sample_portion
+        self.origin_portion = crop_portion
         self.pix_area = pix_area
+        self.batch_size = batch_size
+        self.use_label = pre_process.get('label', False)
+        self.pre_process = pre_process
 
+        with torch_distributed_zero_first(local_rank):
+            if local_rank in [-1, 0]:
+                self.crop2small()
+            self.calcu_label()
+
+
+
+    def calcu_label(self):
+        if self.use_label:
+            self.batch_size = min(self.batch_size, len(self))
+            for result in self.results:
+                result['labels'] = filter_pix(result['labels'], self.pix_area)
+            self.labels = [result['labels'] for result in self.results]
+            label_num = np.array([len(l) for l in self.labels])
+            self.obj_index = np.where(label_num > 0)[0]
+            self.bkg_index = np.where(label_num == 0)[0]
+            if self.pre_process['rect']:
+                rect_shape(self.results, self.imgsz, self.pre_process['pad'], self.pre_process['stride'], self.batch_size)
 
     def format(self, result):
         trans_result = deepcopy(result)
@@ -342,67 +276,80 @@ class LoadImagesAndLabels(Dataset):
         img = np.ascontiguousarray(img[::-1])  # BGR to RGB
         return img, labels, class_label, trans_result
 
-    def index_shuffle(self, rank=-1):
-
-        # print(f'now we select sample {self.portion} in {rank}')
-        # self.indices = random.choices(range(len(self.origin_results)),
-        #                               k=int(len(self.origin_results) * self.portion))  # rand weighted idx
-        # self.select_result = self.origin_results[]
+    def crop2small(self):
         if self.cropped_imgsz:
-            slide_crop = self.slide_crop
-            crop_dir = f'slide_crop_{self.cropped_imgsz[1]}_{self.cropped_imgsz[0]}' if slide_crop else f'center_crop_{self.cropped_imgsz[1]}_{self.cropped_imgsz[0]}'
+            print_log('crop now:', self.logger)
+            crop_dir = f'slide_crop_{self.cropped_imgsz[1]}_{self.cropped_imgsz[0]}' if self.slide_crop else f'center_crop_{self.cropped_imgsz[1]}_{self.cropped_imgsz[0]}'
             path = str(self.p / crop_dir)
-            if rank in [-1, 0]:
+            if self.rank in [-1, 0]:
                 crop_flag = 1
             else:
                 crop_flag = 0
-            if Path(path).exists() and slide_crop:
-                crop_flag = 0
+            if Path(path).exists():
+                sa, sb, sm = os.sep + 'images' + os.sep, os.sep + 'labels' + os.sep, os.sep + 'labels' + os.sep + 'masks' + os.sep
+                label_path = sb.join(path.rsplit(sa, 1))
+                if Path(label_path).exists() and not self.repeat_crop:
+                    print_log(f'{path} images and labels exist, no need crop', self.logger)
+                    crop_flag = 0
 
             if crop_flag:
-                if Path(path).exists() and not slide_crop:
+                if Path(path).exists() and self.repeat_crop:
                     shutil.rmtree(path)
-                    print('remove dir:', path)
+                    print_log(f'remove dir: {path}', self.logger)
                 # crop on line
                 self.results = []
                 obj_repeat = self.obj_repeat
                 bg_repeat = self.bg_repeat
                 iou_thres = self.iou_thres
                 pix_thres = self.pix_thres
-                for result in tqdm(self.origin_results, total=len(self.origin_results), bar_format='', desc=f'crop big picture to {crop_dir}'):
-                    cropped_results = load_big2_small(result, self.cropped_imgsz, crop_dir, obj_repeat,  bg_repeat, iou_thres, pix_thres, slide_crop=slide_crop)
+                if self.slide_crop:
+                    crop_use = self.origin_results
+                else:
+                    select_idx = random.choices(range(len(self.origin_results)),
+                                                  k=int(len(self.origin_results) * self.origin_portion))  # rand weighted idx
+                    crop_use = [self.origin_results[i] for i in select_idx]
+                for result in tqdm(crop_use, total=len(crop_use), bar_format='', desc=f'crop big picture to {crop_dir}'):
+                    cropped_results = load_big2_small(result, self.cropped_imgsz, crop_dir, obj_repeat,  bg_repeat, iou_thres, pix_thres, slide_crop=self.slide_crop)
                     # print(f"{result['filename']} cropped done,{list(result.keys())} crop images {len(cropped_results)}")
                     self.results.extend(cropped_results)
                 print_log(f'cropped images {len(self.results)}', self.logger)
 
             else:
+
                 img_files = select_image(path)
                 assert img_files, f'cropped dataset {path} No images found'
                 print_log(f'now we found {len(img_files)} images in dataset', self.logger)
 
-                results = load_images(img_files, img_size=self.imgsz)
+                results = load_results(img_files, img_size=self.imgsz)
                 results = load_labels(results,  logger=self.logger)
                 self.results = results
+            self.calcu_label()
             self.indices = np.arange(len(self.results))
-            if slide_crop:
+            if self.slide_crop:
                 self.cropped_imgsz=False
+            # else:
+            #     self.portion = 1.
 
-        else:
-            self.indices = np.arange(len(self.results))
-            if self.bkg_ratio:
-                indices = self.obj_index
-                obj_num = len(indices)
-                bkg_indices = np.random.choice(self.bkg_index, int(obj_num*self.bkg_ratio))
-                self.indices = np.concatenate((indices, bkg_indices))
-            if self.obj_mask:
-                mask_indices = -(1 + self.obj_index)
-                self.indices = np.concatenate((self.indices, mask_indices))
-        # self.indices = -(1 + self.obj_index)
-        # random.shuffle(self.indices)
+
+    def index_shuffle(self):
+        self.crop2small()
+        self.indices = np.arange(len(self.results))
         # select sample randomly
-        print(f'now we select sample {self.portion} in {rank}')
+        # print(f'now we select sample {self.portion} in {self.rank}')
         self.indices = random.choices(range(len(self.indices)), k=int(len(self.indices)*self.portion))  # rand weighted idx
-        print_log(f'now we shuffle and now dataset length is {len(self)}', self.logger)
+        if self.bkg_ratio:
+            indices = self.obj_index
+            obj_num = len(indices)
+            bkg_indices = np.random.choice(self.bkg_index, int(obj_num*self.bkg_ratio))
+            self.indices = np.concatenate((indices, bkg_indices))
+        if self.obj_mask:
+            mask_indices = -(1 + self.obj_index)
+            self.indices = np.concatenate((self.indices, mask_indices))
+        # self.indices = -(1 + self.obj_index)
+        # random.shuffle(self.indices) # 其实这里不需要shuffle(), DistributedSampler 里已经有shuffle
+        # print(f'shuffle down, indices length {len(self)} in {self.rank} and indices same {self.indices[:5]}') # indices 相同
+        # print_log(f'now we shuffle and now dataset length is {len(self)}', self.logger)
+        
 
     def __len__(self):
         return len(self.indices)
@@ -531,7 +478,7 @@ class LoadImages(LoadImagesAndLabels):
             assert img0 is not None, f'Image Not Found {path}'
             s = f'image {self.count}/{self.nf} {path}: '
 
-        result = load_image_result(img0, self.img_size)
+        result = initial_result(img0, self.img_size)
         if self.slide_crop is not None:
             imgs = []
             self.crop_axis = []

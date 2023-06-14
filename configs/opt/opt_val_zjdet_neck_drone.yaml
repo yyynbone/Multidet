@@ -1,5 +1,5 @@
 weights:
-  - results/train/drone/zjdet_neck/exp/weights/best.pt
+  - results/train/drone/zjdet_neck/exp2/weights/best.pt
 
 data: drone.yaml
 data_prefile: data_preprocess.yaml
@@ -8,13 +8,16 @@ bgr: 1
 last_conf: [0.3]
 verbose: True
 visual_matched: False
+save_txt: True
+save_conf: True
 imgsz:
 - 540
 - 960
 div_area:
+- 5
 - 10
-- 20
-#val_cropped_imgsz: [540, 960]
-#slide_crop: True
-val_sample_portion: .1 # random select sample
-pix_area : [1, 20]
+- 15
+val_cropped_imgsz: [540, 960]
+slide_crop: True
+val_sample_portion: .01 # random select sample
+# pix_area : [1, 100]

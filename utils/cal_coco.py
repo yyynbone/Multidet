@@ -390,7 +390,7 @@ def visual_return(cocoeval, anno, save_dir, img_prefix, class_area=None, iou_id=
 
         gt_result = box2points(gt_result, 6)
         bbox_result = box2points(bbox_result, 7)
-        bbox_result = bbox_select(bbox_result, score_thresh)  # [[306.      278.      433.      425.        0.83548   5  ], ...]
+        # bbox_result = bbox_select(bbox_result, score_thresh)  # [[306.      278.      433.      425.        0.83548   5  ], ...]
         # print(gt_result, bbox_result)
         iou_thres = cocoeval.params.iouThrs[iou_id]
         # box_scale = 1 / iou_thres

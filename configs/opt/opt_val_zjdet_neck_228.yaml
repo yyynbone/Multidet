@@ -13,5 +13,7 @@ imgsz: [128, 128]
 val_cropped_imgsz: [128, 128]
 loss_num: 3
 div_area:
-- 5
-- 10
+- 20
+- 50
+slide_crop: True
+ignore_bkg: True

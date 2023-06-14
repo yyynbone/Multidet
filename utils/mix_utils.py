@@ -11,6 +11,7 @@ import math
 import os
 import json
 from utils.label_process import xyxy2xywh
+from utils.logger import print_log
 
 # def mkdir(path):
 #     if not os.path.exists(path):
@@ -126,7 +127,7 @@ def smooth_BCE(eps=0.1):
     # return positive, negative label smoothing BCE targets
     return 1.0 - 0.5 * eps, 0.5 * eps
 
-def intersect_dicts(da, db, exclude=(), key_match=True, skip=False):
+def intersect_dicts(da, db, exclude=(), key_match=True, skip=False, logger=None):
     if key_match:
         # Dictionary intersection of matching keys and shapes, omitting 'exclude' keys, using da values
         return {k: v for k, v in da.items() if k in db and not any(x in k for x in exclude) and v.shape == db[k].shape}
@@ -140,9 +141,9 @@ def intersect_dicts(da, db, exclude=(), key_match=True, skip=False):
                 if v.shape == value[i].shape:
                     new_csd[keys[i]] = v
                 else:
-                    print(f'{k} shape {v.shape} not match {keys[i]} shape {value[i].shape}')
+                    print_log(f'{k} shape {v.shape} not match {keys[i]} shape {value[i].shape}', logger)
             else:
-                print(f'{k} shape {v.shape} not match')
+                print_log(f'{k} shape {v.shape} not match', logger)
                 if skip:
                     i-=1
             i+=1

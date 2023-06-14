@@ -8,6 +8,7 @@ import torch
 import yaml
 from tqdm import tqdm
 from utils import print_log, colorstr, xyxy2xywh
+from dataloader import read_image
 import matplotlib.pyplot as plt
 PREFIX = colorstr('AutoAnchor: ')
 
@@ -39,6 +40,7 @@ def check_anchors(dataset, model, imgsz=640, thr=4.0, logger=None):
         if len(m.anchors):
             resized_wh = []
             for result in dataset.results:
+                read_image(result)
                 ratio_w = result.get('rect_shape', result['img_size'])[1]/ result['ori_shape'][1]
                 ratio_h = result.get('rect_shape', result['img_size'])[0] / result['ori_shape'][0]
                 wh = (result['labels'][:, 3:5] - result['labels'][:, 1:3] )* np.array([ratio_w, ratio_h])
@@ -147,6 +149,7 @@ def kmean_anchors(dataset='./data/coco128.yaml', n=9, img_size=640, thr=4.0, gen
     resized_wh = []
     for result in results:
         if img_size is not None:
+            read_image(result)
             ratio_w = result.get('rect_shape', result['img_size'])[1] / result['ori_shape'][1]
             ratio_h = result.get('rect_shape', result['img_size'])[0] / result['ori_shape'][0]
         else:

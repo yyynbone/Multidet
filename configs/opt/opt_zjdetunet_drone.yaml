@@ -1,0 +1,37 @@
+weights: results/train/drone/zjdetv8s_sscale/exp5/weights/best.pt
+cfg: zjdet_unet.yaml
+
+data: drone.yaml
+data_prefile: data_preprocess_false.yaml
+hyp: hyp_v8.yaml
+batch_size: 4 # for 640*640 64
+bgr: 1
+last_conf: 0.3
+verbose: True
+visual_matched: False
+imgsz:
+- 544
+- 960
+div_area:
+- 5
+- 10
+- 50
+epochs: 500
+patience: 300
+rect: false
+world_size: 8
+loss: LossV8
+loss_supervision: 100
+
+
+resume: False
+#train_cropped_imgsz: [180, 240]
+#val_cropped_imgsz: [180, 240]
+#slide_crop: False
+#crop_sample_portion: 0.1
+train_sample_portion: 0.1 # random select sample
+val_sample_portion: .02 # random select sample
+ignore_bkg: True
+# pix_area : [2, 50]
+# noautoanchor: True
+# shuffle_epoch: 100
