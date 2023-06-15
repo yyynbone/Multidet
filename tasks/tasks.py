@@ -10,6 +10,7 @@ import yaml
 import time
 from datetime import datetime
 
+
 import torch
 from torch.utils.data import DataLoader, distributed
 from torch.cuda import amp
@@ -21,13 +22,14 @@ from loss import *
 from models  import (attempt_load, Model)
 from dataloader import check_anchors, check_train_batch_size, LoadImagesAndLabels, get_dataset, SuffleLoader, SuffleDist_Sample
 from utils.lr_schedule import *
-from utils import ( check_dataset, check_img_size, check_suffix, colorstr, time_sync, init_seeds,
+from utils import ( check_dataset, check_img_size, check_suffix, colorstr, time_sync, init_seeds, var_size,
                     labels_to_class_weights, labels_to_image_weights, strip_optimizer, cal_flops, intersect_dicts,
                     Callback, de_parallel, torch_distributed_zero_first, EarlyStopping, ModelEMA, LossSaddle,
                     output_to_target, xywh2xyxy, xyxy2xywh, non_max_suppression_with_iof,
                     div_area_idx, process_batch,  ConfusionMatrix, det_calculate, det_coco_calculate,
                     select_class_tuple, save_one_txt, save_one_json,  plot_results, plot_images, plot_labels,
                     visual_match_pred, print_log, classify_match, save_object )
+
 
 FILE = Path(__file__).resolve()
 
@@ -224,6 +226,13 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
     batch_size = train_dataset.batch_size
     if node in [-1, 0] and local_rank in [-1, 0]:
         plot_labels(train_dataset.labels, names=select_class_tuple(data_dict), save_dir=save_dir, logger=logger)
+
+        # Process 0
+    if not resume and local_rank in [-1, 0]:
+        # Anchors
+        if not opt.noautoanchor and model.yaml.get('anchors') is not None:
+            check_anchors(train_dataset, model=model, imgsz=imgsz, thr=hyp['anchor_t'], logger=logger)
+
     class_weights = labels_to_class_weights(train_dataset.labels, nc)
     hyp['cls_weight'] = class_weights
     opt.hyp = hyp
@@ -254,11 +263,6 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
     #     train_dataset.indices = np.concatenate((train_dataset.indices, add_indices))
     print_log('train dataset loader done', logger)
 
-    # Process 0
-    if not resume and local_rank in [-1, 0]:
-        # Anchors
-        if not opt.noautoanchor and model.yaml.get('anchors') is not None:
-            check_anchors(train_dataset, model=model, imgsz=imgsz,  thr=hyp['anchor_t'], logger=logger)
 
     # Valloader
     val_dataset = LoadImagesAndLabels(val_pre,
@@ -446,6 +450,7 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
     print_log(f'out_saddle is {out_saddle}\n stopper is {stopper} \n '
               f'Using {train_loader.num_workers} dataloader workers per gpu \n'
               f'compute_loss is {compute_loss} \n pos_schedule is {pos_schedule}\n'
+              f'train data is in local rank  {var_size(train_loader)}\n '
               f'Starting training for {epochs} epochs...', logger)
 
     if opt.val_first:
@@ -453,19 +458,26 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
 
     # Start training
     t0 = time.time()
-
+    del train_data, train_dataset, val_data, val_dataset   # 释放内存
     for epoch in range(start_epoch, epochs):  # epoch ---------------------------------------------------------
         # print('before epoch after broadcast is', broadcast_list, local_rank)
         lr_coeft = broadcast_list[1]
         # print('before epoch after broadcast is', lr_coeft, local_rank)
         if not opt.val_first:
             model.train()
+            # keys = dir()
+            # for var in keys:
+            #     print(var, var_size(eval(var)))
+            if node != -1:
+                train_loader.dataset.rm_result_img()
+                train_loader.sampler.set_epoch(epoch)
+
             # Update image weights (optional, single-GPU only)
             if opt.image_weights:
                 cw = model.class_weights * (1 - maps) ** 2 / model.nc  # class weights
                 iw = labels_to_image_weights(train_loader.dataset.labels, nc=model.nc, class_weights=cw)  # image weights
-                train_dataset.indices = random.choices(range(len(train_dataset)), weights=iw,
-                                                       k=len(train_dataset))  # rand weighted idx
+                train_loader.dataset.indices = random.choices(range(len(train_loader.dataset)), weights=iw,
+                                                       k=len(train_loader.dataset))  # rand weighted idx
              
             # Update mosaic border (optional)
             # b = int(random.uniform(0.25 * imgsz, 0.75 * imgsz + gs) // gs * gs)
@@ -489,10 +501,10 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
             #                       collate_fn=LoadImagesAndLabels.collate_fn)
             # print('shuffle_index load in: ', local_rank)
             # print("#################################################", local_rank)
-            if node != -1:
-                train_loader.sampler.set_epoch(epoch)
+
             pbar = enumerate(train_loader)
             nb = len(train_loader)  # number of batches
+
             # print("#################################################after", local_rank)
             # print(len(train_dataset), nb, batch_size, train_loader.batch_size, train_loader.batch_sampler)
             # print(logger.handlers)

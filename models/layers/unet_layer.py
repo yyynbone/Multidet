@@ -43,8 +43,9 @@ class MultiDecoder(nn.Module):
         super().__init__()
         self.layers = []
         pool_conv = len(in_channel)-up_sample-1
+        align_corners = True if up_mode=='bilinear' else None
         for i in range(up_sample):
-            self.layers.append( nn.Sequential(nn.Upsample(scale_factor=2**(up_sample-i), mode=up_mode),
+            self.layers.append( nn.Sequential(nn.Upsample(scale_factor=2**(up_sample-i), mode=up_mode, align_corners=align_corners),
                                   Conv(in_channel[i], out_channel, k=3, s=1)) )
         self.layers.append(Conv(in_channel[up_sample], out_channel, k=3, s=1))
         for i in range(pool_conv):

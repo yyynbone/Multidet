@@ -4,7 +4,7 @@ width_multiple: 0.5  # layer channel multiple
 depth_layer: [C2f]
 width_layer: [Conv, C2f, MultiDecoder, Detect]
 anchors:
-  - [2,3, 6,9, 4,7, 8,15, 18,30, 25,15, 32,61, 62,45, 59,119]
+  - [2,3, 8,15, 32,61, 59,119]  # 5,4, 8,7, 14,12, 29,18 # 9,8, 21,12, 28,25, 61,40
 
 # YOLOv8  backbone
 backbone:

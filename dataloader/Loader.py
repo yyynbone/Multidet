@@ -247,8 +247,13 @@ class LoadImagesAndLabels(Dataset):
             if self.pre_process['rect']:
                 rect_shape(self.results, self.imgsz, self.pre_process['pad'], self.pre_process['stride'], self.batch_size)
 
-    def format(self, result):
-        trans_result = deepcopy(result)
+    def rm_result_img(self):
+        for result in self.results:
+            if 'img' in result.keys():
+                result.pop('img')
+
+    def format(self, trans_result):
+        # trans_result = deepcopy(result)
         self.T(trans_result)
         if self.gray:
             gray(trans_result)
@@ -265,9 +270,12 @@ class LoadImagesAndLabels(Dataset):
                 # select category we wanted and sequence it from 0:
                 # if l.ndim>1:
                 for i, sc in enumerate(self.select_class):
+                    if isinstance(sc, str):
+                        print('no need to convert clsid ,string in ', self.select_class)
+                        break
                     # l[l[..., 0]==sc][..., 0] == i # this is false, cant change l
                     labels[labels[..., 0] == sc, 0] = i
-                    
+
                 class_label += 1
 
         # Convert
@@ -303,7 +311,7 @@ class LoadImagesAndLabels(Dataset):
                 iou_thres = self.iou_thres
                 pix_thres = self.pix_thres
                 if self.slide_crop:
-                    crop_use = self.origin_results
+                    crop_use = deepcopy(self.origin_results)
                 else:
                     select_idx = random.choices(range(len(self.origin_results)),
                                                   k=int(len(self.origin_results) * self.origin_portion))  # rand weighted idx

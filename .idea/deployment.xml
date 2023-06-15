@@ -9,6 +9,7 @@
           </mappings>
           <excludedPaths>
             <excludedPath local="true" path="$PROJECT_DIR$/checkpoints" />
+            <excludedPath path="/results/train/drone/zjdet_unet" />
             <excludedPath path="/results" />
           </excludedPaths>
         </serverdata>

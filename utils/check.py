@@ -1,4 +1,12 @@
-import sys
+# from pympler import asizeof
+# from __future__ import print_function
+from sys import getsizeof, stderr
+from itertools import chain
+from collections import deque
+# try:
+#     from reprlib import repr
+# except ImportError:
+#     pass
 import os
 import platform
 from subprocess import check_output
@@ -7,7 +15,6 @@ from PIL import ImageFont
 import cv2
 import yaml
 import numpy as np
-import platform
 import glob
 import urllib
 import torch
@@ -81,6 +88,91 @@ def file_size(path):
         return sum(f.stat().st_size for f in path.glob('**/*') if f.is_file()) / mb
     else:
         return 0.0
+
+
+
+def total_size(o, handlers={}, verbose=False):
+    """ Returns the approximate memory footprint an object and all of its contents.
+
+    Automatically finds the contents of the following builtin containers and
+    their subclasses:  tuple, list, deque, dict, set and frozenset.
+    To search other containers, add handlers to iterate over their contents:
+
+        handlers = {SomeContainerClass: iter,
+                    OtherContainerClass: OtherContainerClass.get_elements}
+
+            ##### Example call #####
+            d = dict(a=1, b=2, c=3, d=[4,5,6,7], e='a string of chars')
+            print(total_size(d, verbose=True))
+
+            class D():
+                def __init__(self):
+                    self.a = 1
+                    self.b = [12, 2, 5, 4]
+                    self.c = 'dfafdfa'
+                    self.d = {'a': 8, 'dfa': 'df'}
+            print(total_size(D, verbose=True))
+
+    """
+    dict_handler = lambda d: chain.from_iterable(d.items())
+    all_handlers = {tuple: iter,
+                    list: iter,
+                    deque: iter,
+                    dict: dict_handler,
+                    set: iter,
+                    frozenset: iter,
+                   }
+    all_handlers.update(handlers)     # user handlers take precedence
+    seen = set()                      # track which object id's have already been seen
+    default_size = getsizeof(0)       # estimate sizeof object without __sizeof__
+
+    def sizeof(o):
+        if id(o) in seen:       # do not double count the same object
+            return 0
+        seen.add(id(o))
+        if isinstance(o, np.ndarray):
+            s = o.nbytes
+        else:
+            s = getsizeof(o, default_size)
+
+        if verbose:
+            print(s, type(o), repr(o))#, file=stderr)
+
+        for typ, handler in all_handlers.items():
+            if isinstance(o, typ):
+                s += sum(map(sizeof, handler(o)))
+                break
+        else:
+            # if not hasattr(o.__class__, '__slots__'):
+            #     if hasattr(o, '__dict__'):
+            #         s += sizeof(
+            #             o.__dict__)  # no __slots__ *usually* means a __dict__, but some special builtin classes (such as `type(None)`) have neither
+            #     # else, `o` has no attributes at all, so sys.getsizeof() actually returned the correct value
+            # else:
+            #     s += sum(sizeof(getattr(o, x)) for x in o.__class__.__slots__ if hasattr(o, x))
+            if hasattr(o, '__dict__'):
+                s += sizeof(o.__dict__)
+        return s
+
+    return sizeof(o)
+
+
+
+def var_size(var):
+    # obj.__sizeof__  对象内置属性
+    # sys.getsizeof(obj) sys模块
+    # total_size(obj) python 内置函数
+    # size = getsizeof(var)  # 变量本身占用的内存大小，不包括变量引用的其他对象所占用的内存,
+    # # 只会计算容器本身占用的内存大小，而不会计算其元素或键值对所占用的内存大小
+    size = total_size(var)
+    # print(size)
+    assert isinstance(size, int)
+    if size <=1024:
+        return f'use memory of {round(size/1024, 2)} KB'
+    elif size <=1024**2:
+        return f'use memory of {round(size/1024**2, 2)} MB'
+    else:
+        return f'use memory of {round(size/1024**3, 2)} GB'
 
 def check_font(font='Arial.ttf', size=10):
     # Return a PIL TrueType Font, downloading to CONFIG_DIR if necessary
@@ -247,4 +339,23 @@ def load_args(opt):
                 args = yaml.safe_load(f)  # load hyps dict
             for k, v in args.items():
                 setattr(opt, k, v)
+
+
+# if __name__ == '__main__':
+    # d = dict(a=1, b=2, c=3, d=[4, [5,456,455,2332,'dafadf'], 6, 7], e='a string of chars', f = np.array([1., 3, 5,7]))
+    # print(total_size(d, verbose=True))
+    # print(d['f'].nbytes,  getsizeof(d['f']))  #32 , 144
+    # print(var_size(d))
+    # class A():
+    #     __slots__ = ()
+    #
+    # class D(A):
+    #     def __init__(self):
+    #         self.a = 1
+    #         self.b = [12, 2, 5, 4]
+    #         self.c = 'dfafdfa'
+    #         self.d = {'a': 8, 'dfa': 'df'}
+    # a = D()
+    # print(total_size(a, verbose=True))
+
 

@@ -736,10 +736,10 @@ def load_mosaic(results, indice=None, more_add=6):
     new_result['instance_segments'] = segments_all if segments_all else None
     return  new_result
 
-def load_big2_small(big_result, cropped_imgsz, crop_dir='crop', obj_repeat=2, bg_repeat=2, iou_thres=0.4, pix_thres=8, save_crop=True,slide_crop=False):
+def load_big2_small(result, cropped_imgsz, crop_dir='crop', obj_repeat=2, bg_repeat=2, iou_thres=0.4, pix_thres=8, save_crop=True,slide_crop=False):
     crop_h, crop_w = cropped_imgsz
     small_results = []
-    result = deepcopy(big_result)
+    # result = deepcopy(big_result)
     read_image(result)
     img = result['img']
     instance_segment = result['instance_segments']
