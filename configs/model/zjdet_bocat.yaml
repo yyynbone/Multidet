@@ -1,0 +1,93 @@
+# Parameters
+depth_multiple: 0.66  # model depth multiple
+width_multiple: 1.  # layer channel multiple
+depth_layer: []
+width_layer: [Conv, Bottleneckcat, SPPF, Detect]
+anchors:
+#  - [8,15, 18,30, 25,15]  # P3/8
+#  - [32,61, 62,45, 59,119]  # P4/16
+#  - [116,90, 156,198, 373,326]  # P5/32
+  - [10,8, 13,25, 38,18]
+  - [28,34, 57,33, 49,60]
+  - [99,52, 82,103, 182,113]
+
+# [from,  module, args], args=[ch_in , ch_out, etc]
+backbone:
+  [[-1, Conv, [32, 6, 2, 2]],  # 0-P1/2
+   [-1, Conv, [32, 64, 3, 2]],  # 1-P2/4
+   [-1, Bottleneckcat, [64, 64]],
+   [-1, Conv, [64, 128, 3, 2]],  # 3-P3/8
+   [-1, Bottleneckcat, [128, 128]],
+   [-1, Conv, [128, 256, 3, 2]],  # 5-P4/16
+   [-1, Bottleneckcat, [256, 256]],
+   [-1, Conv, [256, 512, 3, 2]], # 7-P5/32
+   [-1, Bottleneckcat, [512, 512]],
+   [-1, SPPF, [512, 512, 5]],  # 9
+  ]
+
+neck:
+  [[-1, Conv, [512, 512, 1, 1]],
+   [-1, Bottleneckcat, [512, 512, False]],  # 11 (P5/32-big)
+
+   [-1, Conv, [512, 256, 1, 1]],
+   [-1, nn.Upsample,  [None, 2, 'nearest']],
+   [[-1, 6], Concat,  [1]],  # cat backbone P4/16-medium
+   [-1, Bottleneckcat, [512, 256, False]], #15
+
+   [-1, Conv, [256, 128, 1, 1]],
+   [-1, nn.Upsample,  [None, 2, 'nearest']],
+   [[-1, 4], Concat,  [1]],  # cat head P5
+   [-1, Bottleneckcat, [256, 128, False]],  # 19 (P3/8-small)
+  ]
+
+head:
+  [[[19, 15, 11], Detect, [[128, 256, 512], nc, anchors]], # Detect(P3, P4, P5)
+  ]
+
+#   from             n    params  module                                  arguments
+#  0                -1      3520  models.layers.common_layer.Conv         [3, 32, 6, 2, 2]
+#  1                -1     18560  models.layers.common_layer.Conv         [32, 64, 3, 2]
+#  2                -1     28992  models.layers.common_layer.Bottleneckcat[64, 64]
+#  3                -1     73984  models.layers.common_layer.Conv         [64, 128, 3, 2]
+#  4                -1    115328  models.layers.common_layer.Bottleneckcat[128, 128]
+#  5                -1    295424  models.layers.common_layer.Conv         [128, 256, 3, 2]
+#  6                -1    460032  models.layers.common_layer.Bottleneckcat[256, 256]
+#  7                -1   1180672  models.layers.common_layer.Conv         [256, 512, 3, 2]
+#  8                -1   1837568  models.layers.common_layer.Bottleneckcat[512, 512]
+#  9                -1    656896  models.layers.yolo_layer.SPPF           [512, 512, 5]
+# 10                -1    263168  models.layers.common_layer.Conv         [512, 512, 1, 1]
+# 11                -1   1837568  models.layers.common_layer.Bottleneckcat[512, 512, False]
+# 12                -1    131584  models.layers.common_layer.Conv         [512, 256, 1, 1]
+# 13                -1         0  torch.nn.modules.upsampling.Upsample    [None, 2, 'nearest']
+# 14           [-1, 6]         0  models.layers.common_layer.Concat       [1]
+# 15                -1    558336  models.layers.common_layer.Bottleneckcat[512, 256, False]
+# 16                -1     33024  models.layers.common_layer.Conv         [256, 128, 1, 1]
+# 17                -1         0  torch.nn.modules.upsampling.Upsample    [None, 2, 'nearest']
+# 18           [-1, 4]         0  models.layers.common_layer.Concat       [1]
+# 19                -1    139904  models.layers.common_layer.Bottleneckcat[256, 128, False]
+# 20      [19, 15, 11]     24273  models.head.Detect                      [[128, 256, 512], 4, [[10, 8, 13, 25, 38, 18], [28, 34, 57, 33, 49, 60], [99, 52, 82, 103, 182, 113]]]
+#Model Summary: 144layers, 7658833 parameters, 7658833 gradients,image size is (640, 640), 14.9 GFLOPs in cpu
+# time (ms)     GFLOPs     params                                    module                       input_size
+#     13.35     0.9290       3520  models.layers.common_layer.Conv           torch.Size([1, 3, 540, 960])
+#     11.05     1.2110      18560  models.layers.common_layer.Conv           torch.Size([1, 32, 270, 480])
+#     27.46     1.8994      28992  models.layers.common_layer.Bottleneckcat  torch.Size([1, 64, 135, 240])
+#      6.85     1.2116      73984  models.layers.common_layer.Conv           torch.Size([1, 64, 135, 240])
+#     15.95     1.8926     115328  models.layers.common_layer.Bottleneckcat  torch.Size([1, 128, 68, 120])
+#      4.80     1.2074     295424  models.layers.common_layer.Conv           torch.Size([1, 128, 68, 120])
+#     17.01     1.8822     460032  models.layers.common_layer.Bottleneckcat  torch.Size([1, 256, 34, 60])
+#      5.13     1.2053    1180672  models.layers.common_layer.Conv           torch.Size([1, 256, 34, 60])
+#      8.75     1.8769    1837568  models.layers.common_layer.Bottleneckcat  torch.Size([1, 512, 17, 30])
+#      7.71     0.6716     656896  models.layers.yolo_layer.SPPF             torch.Size([1, 512, 17, 30])
+#      2.20     0.2695     263168  models.layers.common_layer.Conv           torch.Size([1, 512, 17, 30])
+#      5.61     1.3401    1837568  models.layers.common_layer.Bottleneckcat  torch.Size([1, 512, 17, 30])
+#      0.90     0.1347     131584  models.layers.common_layer.Conv           torch.Size([1, 512, 17, 30])
+#      0.40     0.0010          0  torch.nn.modules.upsampling.Upsample      torch.Size([1, 256, 17, 30])
+#      0.60     0.0000          0  models.layers.common_layer.Concat         [torch.Size([1, 256, 34, 60]), torch.Size([1, 256, 34, 60])]
+#      8.25     1.4769     558336  models.layers.common_layer.Bottleneckcat  torch.Size([1, 512, 34, 60])
+#      2.00     0.1358      33024  models.layers.common_layer.Conv           torch.Size([1, 256, 34, 60])
+#      0.60     0.0021          0  torch.nn.modules.upsampling.Upsample      torch.Size([1, 128, 34, 60])
+#      1.10     0.0000          0  models.layers.common_layer.Concat         [torch.Size([1, 128, 68, 120]), torch.Size([1, 128, 68, 120])]
+#     11.61     1.4832     139904  models.layers.common_layer.Bottleneckcat  torch.Size([1, 256, 68, 120])
+#      4.40     0.0987      24273  models.head.Detect                        [torch.Size([1, 128, 68, 120]), torch.Size([1, 256, 34, 60]), torch.Size([1, 512, 17, 30])]
+#    155.75    18.9290    7658833  Total use cpu
+#    155.75    18.9290    7658833  Per image use cpu

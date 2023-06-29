@@ -131,6 +131,21 @@ class Bottleneck(nn.Module):
     def forward(self, x):
         return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
 
+class Bottleneckcat(nn.Module):
+    # Standard bottleneck
+    def __init__(self, c1, c2, shortcut=True, g=1, k=(1, 3, 3), e=0.5):  # ch_in, ch_out, shortcut, groups, kernels, expand
+        super().__init__()
+        c_ = int(c2 * e)  # hidden channels
+        self.cv1 = Conv(c1, c_, k[0], 1)
+        self.cv2 = Conv(c_, c2, k[1], 1, g=g)
+        self.cv3 = Conv((c1+c2), c2, 1, 1)
+        self.shortcut = shortcut
+
+
+    def forward(self, x):
+        y = self.cv2(self.cv1(x))
+        cat = torch.cat((x,y),dim=1)
+        return self.cv3(cat) if self.shortcut else y
 
 class Contract(nn.Module):
     # Contract width-height into channels, i.e. x(1,64,80,80) to x(1,256,40,40)
@@ -144,7 +159,6 @@ class Contract(nn.Module):
         x = x.view(b, c, h // s, s, w // s, s)  # x(1,64,40,2,40,2)
         x = x.permute(0, 3, 5, 1, 2, 4).contiguous()  # x(1,2,2,64,40,40)
         return x.view(b, c * s * s, h // s, w // s)  # x(1,256,40,40)
-
 
 class Expand(nn.Module):
     # Expand channels into width-height, i.e. x(1,64,80,80) to x(1,16,160,160)
@@ -166,22 +180,20 @@ class Concat(nn.Module):
         self.d = dimension
 
     def forward(self, x):
-        # return torch.cat(x, self.d)
         bs, c, h, w = x[1].shape
         _, u_c, u_h, u_w = x[0].shape
-        f_bais = h*w - u_h*u_w
-        if f_bais > 0:
-            pad = torch.zeros((bs, u_c, f_bais),dtype=x[0].dtype, device=x[0].device)
-            new = torch.concat([x[0].reshape(bs, u_c, -1), pad], dim=-1)
-            x[0] = new.reshape(bs, u_c, h, w)
-        elif f_bais < 0 :
-            new = x[0].reshape(bs, u_c, -1)[:, :, :h*w]
-            x[0] = new.reshape(bs, u_c, h, w)
+        f_bias = h*w - u_h*u_w
+        if f_bias != 0:
+            # print("shape unmatched in dim",x[0].shape, x[1].shape)
+            if f_bias > 0:
+                pad = torch.zeros((bs, u_c, f_bias),dtype=x[0].dtype, device=x[0].device)
+                new = torch.concat([x[0].reshape(bs, u_c, -1), pad], dim=-1)
+                x[0] = new.reshape(bs, u_c, h, w)
+            elif f_bias < 0 :
+                new = x[0].reshape(bs, u_c, -1)[:, :, :h*w]
+                x[0] = new.reshape(bs, u_c, h, w)
 
         return torch.cat(x, self.d)
-        
-        
-
 
 class Upsample_Concat(nn.Module):
     # Concatenate a list of tensors along dimension
@@ -193,13 +205,14 @@ class Upsample_Concat(nn.Module):
     def forward(self, x):
         _,  c, h, w = x[1].shape
         bs, u_c, u_h, u_w = x[0].shape
-        c_d = math.sqrt(u_c / c)
-        r_h, r_w = int(c_d*u_h), int(c_d*u_w)
-        x[0] = x[0].flatten()[:bs*c*r_h*r_w].reshape(bs, c, r_h, r_w)
+        chanel_bias = u_c / c
+        if chanel_bias!=1:
+            c_d = math.sqrt(chanel_bias)
+            r_h, r_w = int(c_d*u_h), int(c_d*u_w)
+            x[0] = x[0].flatten()[:bs*c*r_h*r_w].reshape(bs, c, r_h, r_w)
         m = nn.Upsample((h,w), None, self.mode)
         x[0] = m(x[0])
         return torch.cat(x, self.d)
-
 
 class CrossConv(nn.Module):
     # Cross Convolution Downsample

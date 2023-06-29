@@ -220,6 +220,18 @@ class Concat(nn.Module):
         self.d = dimension
 
     def forward(self, x):
+        # return torch.cat(x, self.d)
+        bs, c, h, w = x[1].shape
+        _, u_c, u_h, u_w = x[0].shape
+        f_bais = h * w - u_h * u_w
+        if f_bais > 0:
+            pad = torch.zeros((bs, u_c, f_bais), dtype=x[0].dtype, device=x[0].device)
+            new = torch.concat([x[0].reshape(bs, u_c, -1), pad], dim=-1)
+            x[0] = new.reshape(bs, u_c, h, w)
+        elif f_bais < 0:
+            new = x[0].reshape(bs, u_c, -1)[:, :, :h * w]
+            x[0] = new.reshape(bs, u_c, h, w)
+
         return torch.cat(x, self.d)
 
 class Detect(nn.Module):
@@ -277,12 +289,22 @@ class Detect(nn.Module):
             b.data[:, 5:] += math.log(0.6 / (m.nc - 0.999999)) if cf is None else torch.log(cf / cf.sum())  # cls
             mi.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
 
+def initialize_weights(model):
+    for m in model.modules():
+        t = type(m)
+        if t is nn.Conv2d:
+            pass  # nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+        elif t is nn.BatchNorm2d:
+            m.eps = 1e-3
+            m.momentum = 0.03
+        elif t in [nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU]:
+            m.inplace = True
 
 class Model(nn.Module):
     def __init__(self):
         super().__init__()
-        anchors = [[8, 15, 18, 30, 25, 15], [32, 61, 62, 45, 59, 119], [116, 90, 156, 198, 373, 326]]
-        self.layers = [Conv(1, 32, k=6, s=2, p=2),  # 0-p1/2
+        anchors = [[4,2, 3,6, 12,5], [10,8, 13,25, 38,18], [28,34, 57,33, 49,60]]
+        self.layers = [Conv(3, 32, k=3, s=1, p=0),  # 0-p1/2
                        Conv(32, 64, k=3, s=2),  #1-p2/4
                        C3(64, 64, n=2),
                        Conv(64, 128, k=3, s=2),  # 3-p3/8
@@ -304,14 +326,50 @@ class Model(nn.Module):
                        Concat(),  # cat [-1,4], backbone p3
                        C3(256, 128, n=2, shortcut=False),
 
-                       Detect(nc=5, ch=(128, 256, 512), anchors=anchors),
+                       Conv(128, 64, k=1, s=1),
+                       nn.Upsample(None, 2, 'nearest'),
+                       Concat(),  # cat [-1,4], backbone p3
+                       C3(128, 64, n=2, shortcut=False),
+
+                       Detect(nc=4, ch=(64, 128, 256), anchors=anchors),
                        ]
-        self.cat_index = [(-1,6), (-1,4),(19,15,11)]
+        self.cat_index = [(-1,6), (-1,4), (-1,2), (23,19,15)]
+        stride = [2, 4, 8]
+        # anchors = [[8, 15, 18, 30, 25, 15], [32, 61, 62, 45, 59, 119], [116, 90, 156, 198, 373, 326]]
+        # self.layers = [Conv(3, 32, k=6, s=2, p=2),  # 0-p1/2
+        #                Conv(32, 64, k=3, s=2),  #1-p2/4
+        #                C3(64, 64, n=2),
+        #                Conv(64, 128, k=3, s=2),  # 3-p3/8
+        #                C3(128, 128, n=4),
+        #                Conv(128, 256, k=3, s=2),  #5-p4/16
+        #                C3(256, 256, n=6),
+        #                Conv(256, 512, k=3, s=2),  #7-p5/32
+        #                C3(512, 512, n=2),
+        #                SPPF(512, 512, k=5),  #9
+        #
+        #                Conv(512, 512, k=1, s=1),
+        #                C3(512, 512, n=2,  shortcut=False),
+        #                Conv(512, 256, k=1, s=1),
+        #                nn.Upsample(None, 2, 'nearest'),
+        #                Concat(),  # cat [-1,6], backbone p4
+        #                C3(512, 256, n=2, shortcut=False),  #12
+        #                Conv(256, 128, k=1, s=1),
+        #                nn.Upsample(None, 2, 'nearest'),
+        #                Concat(),  # cat [-1,4], backbone p3
+        #                C3(256, 128, n=2, shortcut=False),
+        #
+        #                Detect(nc=4, ch=(128, 256, 512), anchors=anchors),
+        #                ]
+        # self.cat_index = [(-1,6), (-1,4),(19,15,11)]
+        # stride = [8, 16, 32]
         self.save_index = set([ind for inds in self.cat_index for ind in inds if ind!=-1])
         self.save_x = [0 for _ in range(len(self.layers))]
         self.model = nn.Sequential(*self.layers)
-        self.stride = self.model[-1].stride = torch.Tensor([8,16,32])
+        self.stride = self.model[-1].stride = torch.Tensor(stride)
         self.nc = self.model[-1].nc
+        if hasattr(self.model[-1], 'bias_init'):
+            self.model[-1].bias_init
+        initialize_weights(self)
 
     def forward(self, x, **kargs):
         cat_i = 0
@@ -326,20 +384,42 @@ class Model(nn.Module):
                 self.save_x[i] = x
         return x
 
+def draw_box(im, box, label, color=(0, 0, 255), txt_color=(255, 255, 255)):
+    lw = max(round(sum(im.shape) / 2 * 0.001), 2)
+    font_size = lw / 3
+    p1, p2 = (int(box[0]), int(box[1])), (int(box[2]), int(box[3]))
+    cv2.rectangle(im, p1, p2, color, thickness=lw, lineType=cv2.LINE_AA)
+    if label:
+        tf = max(lw - 1, 1)  # font thickness
+        w, h = cv2.getTextSize(label, 0, fontScale=font_size, thickness=tf)[0]  # text width, height
+        outside = p1[1] - h - 3 >= 0  # label fits outside box
+        p2 = p1[0] + w, p1[1] - h - 3 if outside else p1[1] + h + 3
+        cv2.rectangle(im, p1, p2, color, -1, cv2.LINE_AA)  # filled
+        cv2.putText(im, label, (p1[0], p1[1] - 2 if outside else p1[1] + h + 2), 0, font_size, txt_color,
+                    thickness=tf, lineType=cv2.LINE_AA)
+    return  im
 
 if __name__ == '__main__':
     device = 'cpu'
 
-    weight = '../model_statedict.pt'
+    weight = '../drone_model_statedict.pt'
     state_dict = torch.load(weight, device)
     model = Model()
     model.load_state_dict(state_dict, strict=False)
     model.eval()
-    im = torch.zeros(1, 1, 128, 128)
-    img_path = '../04_vnir_1_2.jpg'
+    img_size = (960, 540)
+    im = torch.zeros(1, 3, img_size[1], img_size[0])
+    img_path = '../results/val/drone/zjdet_neck_exp2_best/exp/images/9999999_00865_d_0000396-0_960_960_1500.jpg'
+    bgr = True
     import cv2
-    img = cv2.imread(img_path, 0)
-    im[0] = torch.tensor(img[:, :][None]/255.)
+
+    if not bgr:
+        img = cv2.imread(img_path, 0)
+        im[0] = torch.tensor(img[:, :][None] / 255.)
+    else:
+        img = cv2.imread(img_path)
+        img = cv2.resize(img, img_size, interpolation=cv2.INTER_LINEAR)
+        im[0] = torch.tensor(img.transpose(2, 0, 1) / 255.)
     start = time.time()
 
     pred = model(im)
@@ -350,3 +430,30 @@ if __name__ == '__main__':
     print("####################")
     print('inference cost per image of (128,128) %.2f ms'%((end-start)/20/16*1E3))
     print('done')
+
+    names = [ 'car', 'van', 'truck', 'bus']
+    # plot
+    for i, det in enumerate(pred):  # per image
+        if len(det):
+            # Rescale boxes from img_size to im0 size
+            # det[:, :4] = scale_coords(im.shape[2:], det[:, :4], im0.shape).round()
+            # Print results
+            for c in det[:, -1].unique():
+                n = (det[:, -1] == c).sum()  # detections per class
+
+            # Write results
+            for *xyxy, conf, cls in reversed(det):
+                # if save_txt:  # Write to file
+                #     xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
+                #     line = (cls, *xywh, conf) if save_conf else (cls, *xywh)  # label format
+                #     with open(txt_path + '.txt', 'a') as f:
+                #         f.write(('%g ' * len(line)).rstrip() % line + '\n')
+
+
+                c = int(cls)  # integer class
+                label = (f'{names[c]} {conf:.1f}')
+                img = draw_box(img, xyxy,label)
+
+
+        cv2.imshow('result', img)
+        cv2.waitKey(0)  # 1 millisecond

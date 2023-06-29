@@ -18,7 +18,7 @@ try:
 except ImportError:
     thop = False
 
-det_head = (Detect, YOLOv8Detect, IDetect)
+det_head = (Detect, YOLOv8Detect, IDetect, MaskDetect)
 cls_head = (Classify, YOLOv8Classify, SqueezenetClassify, ObjClassify, Flatten)
 def parse_model(d, ch_in, logger=LOGGER):  # model_dict, input_channels(3)
     print_log(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}", logger)
@@ -45,7 +45,7 @@ def parse_model(d, ch_in, logger=LOGGER):  # model_dict, input_channels(3)
             if i == 0 or f == 'input':
                 args.insert(0, ch_in)
                 args[1] = make_divisible(args[1] * gw, 8)
-            elif m in [str(task) for task in (*cls_head, *det_head)]:
+            elif eval(m) in (*cls_head, *det_head):
                 if isinstance(args[0], int):
                     args[0] = make_divisible(args[0] * gw, 8)
                 else:
@@ -326,6 +326,7 @@ class Model(nn.Module):
 
         o = thop.profile(m, inputs=(x.copy() if c else x,), verbose=False)[0] / 1E9 * 2 if thop else 0  # FLOPs
         t = time_sync()
+
         for _ in range(10):
             m(x.copy() if c else x)
         dt.append((time_sync() - t) * 100) # so here we no need to plus 1000
@@ -404,8 +405,8 @@ if __name__ == '__main__':
     FILE = Path(__file__).resolve()
     ROOT = FILE.parents[1]
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/zjdet_unet.yaml', help='model.yaml')
-    parser.add_argument('--device', default='0', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/zjdet_bocat.yaml', help='model.yaml')
+    parser.add_argument('--device', default='cpu', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--profile', default=True, help='profile model speed')
     parser.add_argument('--test', action='store_true', help='test all yolo*.yaml')
     opt = parser.parse_args()
@@ -415,7 +416,7 @@ if __name__ == '__main__':
     device = select_device(opt.device)
     ch_in = 3
     nc = 4
-    input_shape = (ch_in, 544, 960)
+    input_shape = (ch_in, 540, 960)
     # Create model
     if check_yaml(opt.cfg):
         model = Model(opt.cfg, ch=ch_in, nc=nc, imgsz=(640, 640)).to(device)
@@ -425,20 +426,20 @@ if __name__ == '__main__':
         model = attempt_load(weight, map_location=device, ch=ch_in, nc=1)
 
 
-    # # Profile
-    # if opt.profile:
-    #     # img = torch.rand(32 if torch.cuda.is_available() else 1, ch_in, 320, 320).to(device)
-    #     img = torch.rand(1, *(input_shape)).to(device)
-    #     y = model(img, profile=True)
-    #
-    # # Test all models
-    # if opt.test:
-    #     for cfg in Path(ROOT / 'models').rglob('yolo*.yaml'):
-    #         try:
-    #             _ = Model(cfg)
-    #         except Exception as e:
-    #             print(f'Error in {cfg}: {e}')
-    # torch.cuda.empty_cache()
+    # Profile
+    if opt.profile:
+        # img = torch.rand(32 if torch.cuda.is_available() else 1, ch_in, 320, 320).to(device)
+        img = torch.rand(1, *(input_shape)).to(device)
+        y = model(img, profile=True)
+
+    # Test all models
+    if opt.test:
+        for cfg in Path(ROOT / 'models').rglob('yolo*.yaml'):
+            try:
+                _ = Model(cfg)
+            except Exception as e:
+                print(f'Error in {cfg}: {e}')
+    torch.cuda.empty_cache()
 
     # Tensorboard (not working https://github.com/ultralytics/yolov5/issues/2898)
     # from torch.utils.tensorboard import SummaryWriter
@@ -447,13 +448,13 @@ if __name__ == '__main__':
     # tb_writer.add_graph(torch.jit.trace(model, img, strict=False), [])  # add model graph
 
 
-
-    from utils import get_model_complexity_info
-
-    flops, params = get_model_complexity_info(model, input_shape)
-    split_line = '=' * 30
-    print(f'{split_line}\nInput shape: {input_shape}\n'
-          f'Flops: {flops}\nParams: {params}\n{split_line}')   # GMac , 1 GMac = 2GFLOPs
-    print('!!!Please be cautious if you use the results in papers. '
-          'You may need to check if all ops are supported and verify that the '
-          'flops computation is correct.')
+    #
+    # from utils import get_model_complexity_info
+    #
+    # flops, params = get_model_complexity_info(model, input_shape)
+    # split_line = '=' * 30
+    # print(f'{split_line}\nInput shape: {input_shape}\n'
+    #       f'Flops: {flops}\nParams: {params}\n{split_line}')   # GMac , 1 GMac = 2GFLOPs
+    # print('!!!Please be cautious if you use the results in papers. '
+    #       'You may need to check if all ops are supported and verify that the '
+    #       'flops computation is correct.')

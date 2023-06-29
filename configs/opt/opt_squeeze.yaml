@@ -1,6 +1,6 @@
 weights: results/train/merge_scls/squeezenet/exp2/weights/last.pt  # checkpoints/squeezenet.pt
 cfg: squeezenet.yaml
-data: merge_scls.yaml
+data: merge_scls_lan.yaml
 data_prefile: data_preprocess.yaml
 hyp: hyp.yaml
 batch_size: 256

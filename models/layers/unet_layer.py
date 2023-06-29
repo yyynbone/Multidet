@@ -21,21 +21,21 @@ class Mulcat(nn.Module):
         self.d = dimension
 
     def forward(self, xs):
-        return torch.cat(xs, self.d)
-        # x_c = xs[0]
-        # for x in xs[1:]:
-        #     bs, c, h, w = x.shape
-        #     _, u_c, u_h, u_w = x_c.shape
-        #     f_bais = h * w - u_h * u_w
-        #     if f_bais > 0:
-        #         pad = torch.zeros((bs, u_c, f_bais), dtype=x_c.dtype, device=x_c.device)
-        #         new = torch.concat([x_c.reshape(bs, u_c, -1), pad], dim=-1)
-        #         x_c = new.reshape(bs, u_c, h, w)
-        #     elif f_bais < 0:
-        #         new = x_c.reshape(bs, u_c, -1)[:, :, :h * w]
-        #         x_c = new.reshape(bs, u_c, h, w)
-        #     x_c = torch.cat([x_c, x], self.d)
-        # return x_c
+        # return torch.cat(xs, self.d)
+        x_c = xs[0]
+        for x in xs[1:]:
+            bs, c, h, w = x.shape
+            _, u_c, u_h, u_w = x_c.shape
+            f_bais = h * w - u_h * u_w
+            if f_bais > 0:
+                pad = torch.zeros((bs, u_c, f_bais), dtype=x_c.dtype, device=x_c.device)
+                new = torch.concat([x_c.reshape(bs, u_c, -1), pad], dim=-1)
+                x_c = new.reshape(bs, u_c, h, w)
+            elif f_bais < 0:
+                new = x_c.reshape(bs, u_c, -1)[:, :, :h * w]
+                x_c = new.reshape(bs, u_c, h, w)
+            x_c = torch.cat([x_c, x], self.d)
+        return x_c
 
 
 class MultiDecoder(nn.Module):

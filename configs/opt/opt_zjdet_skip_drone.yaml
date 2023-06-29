@@ -1,0 +1,34 @@
+weights: results/train/drone_crop/zjdet_neck_up/exp3/weights/best.pt
+cfg: zjdet_skipm.yaml
+
+data: drone.yaml
+data_prefile: data_preprocess.yaml
+hyp: hyp.yaml
+batch_size: 512 # for 640*640 64
+bgr: 1
+last_conf: 0.3
+verbose: True
+visual_matched: False
+imgsz:
+- 90
+- 120
+div_area:
+- 5
+- 10
+- 15
+epochs: 1000
+rect: false
+world_size: 8
+loss: LossV5
+loss_supervision: 50
+patience: 600
+
+resume: False
+train_cropped_imgsz: [360, 480]
+val_cropped_imgsz: [360, 480]
+slide_crop: True
+crop_sample_portion: 0.1
+origin_sample: 1
+train_sample_portion: 1. # random select sample
+val_sample_portion: .2 # random select sample
+ignore_bkg: True

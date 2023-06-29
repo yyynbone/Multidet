@@ -31,13 +31,13 @@ neck:
 #   [0, Poolconv, [64, 64, 8]]
 #   [[10, 11, 12, 13, 14], Mulcat, [1]],  # cat backbone P3
 
-   [[-1, 6, 4, 2, 0], MultiDecoder, [[1024, 512, 256, 128, 64], 16, 4,  'bilinear']],
-   # [-1, Conv, [80, 64,  3, 1]],
+   [[-1, 6, 4, 2, 0], MultiDecoder, [[1024, 512, 256, 128, 64], 64, 4,  'bilinear']],
+   [-1, Conv, [320, 64,  3, 1]],
   ]
 head:
   [
    # [[10], Detect, [[320], nc, anchors]],#
-    [[9], MaskDetect, [[80], nc]],#
+    [[9], MaskDetect, [[64], nc]],#
   ]
 # from               n    params  module                                  arguments
 #  0                -1       464  models.layers.common_layer.Conv         [3, 16, 3, 1]

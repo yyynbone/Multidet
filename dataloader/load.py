@@ -11,7 +11,7 @@ import numpy as np
 from tqdm import tqdm
 import xml.etree.ElementTree as ET
 import warnings
-from utils import  segments2boxes, segments2boxes_xyxy, print_log, xyxy2xywh, xyn2xy, clip_label, mkdir
+from utils import  segments2boxes, segments2boxes_xyxy, print_log, xyxy2xywh, xyn2xy, clip_label, mkdir, xywh2xyxy
 from dataloader.data_utils import bbox_overlaps
 from functools import partial
 
@@ -227,11 +227,10 @@ def get_yolotxt(label_file, select_class):
     if len(l):
         assert l.shape[1] == 5, f'labels require 5 columns, {l.shape[1]} columns detected'
         assert (l >= 0).all(), f'negative label values {l[l < 0]}'
-        assert not (l[:, 1:] <= 1).all(), 'label format should be (cls, xyxy), not normailized'
-        # if (l[:, 1:] <= 1).all():
-        #     # xywh 2 xyxy
-        #
-        #     l[:, 1:] = xywh2xyxy(l[:, 1:], 832, 832)
+        # (l[:, 1:] <= 1).all(), 'label format should be (cls, xyxy), not normailized'
+        if (l[:, 1:] <= 1).all():
+            # xywh 2 xyxy
+            l[:, 1:] = xywh2xyxy(l[:, 1:], 832, 832)
         #     # l[:, 1:] = xywh2xyxy(l[:, 1:], result['img_size'][1], result['img_size'][0])
         # else:
         #     l[:, 1:] = xywh2xyxy(l[:, 1:], 1, 1)

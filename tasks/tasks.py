@@ -35,29 +35,21 @@ FILE = Path(__file__).resolve()
 
 
 def before_train(hyp, opt, logger):
-    save_dir, epochs, batch_size, weights, single_cls, evolve, data, cfg, resume, noval, nosave, workers, freeze, = \
-        Path(opt.save_dir), opt.epochs, opt.batch_size, opt.weights, opt.single_cls, opt.evolve, opt.data, opt.cfg, \
+    epochs, batch_size, weights, single_cls, evolve, data, cfg, resume, noval, nosave, workers, freeze, = \
+         opt.epochs, opt.batch_size, opt.weights, opt.single_cls, opt.evolve, opt.data, opt.cfg, \
         opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze
     max_stride = 2
     # Hyperparameters
     if isinstance(hyp, str):
         with open(hyp, errors='ignore') as f:
             hyp = yaml.safe_load(f)  # load hyps dict
-    print_log(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()), logger)
-
-    # Save run settings
-    if not evolve:
-        with open(save_dir / 'hyp.yaml', 'w') as f:
-            yaml.safe_dump(hyp, f, sort_keys=False)
-        with open(save_dir / 'opt.yaml', 'w') as f:
-            yaml.safe_dump(vars(opt), f, sort_keys=False)
 
     # Loggers
     # this will run in each local_rank
     data_dict =  check_dataset(data)  # check if None
     opt.data_dict =  data_dict
-    train_path, val_path = data_dict['train'], data_dict['val']
-
+    train_path =data_dict.get('train', None)
+    val_path =  data_dict.get('val', None)
     with open(opt.data_prefile, errors='ignore') as f:
         data_pre = yaml.safe_load(f)  # load hyps dict
     train_pre = data_pre['train']
@@ -69,13 +61,13 @@ def before_train(hyp, opt, logger):
         nc += 1
     hyp['nc'] = nc
     hyp['names'] = names
-    # assert len(names) == nc, f'{len(names)} names found for nc={nc} dataset in {data}'  # check
+    assert len(names) == nc, f'{len(names)} names found for nc={nc} dataset in {data}'  # check
 
 
-    if opt.bgr:
-        ch_in = 3
-    else:
-        ch_in = 1
+    # if opt.bgr:
+    #     ch_in = 3
+    # else:
+    #     ch_in = 1
     # if resume:
     #     ckpt = torch.load(weights, map_location='cpu')  # load checkpoint
     #     model = ckpt.get('ema', ckpt['model']).float()
@@ -103,22 +95,6 @@ def before_train(hyp, opt, logger):
     #     batch_size = check_train_batch_size(model, imgsz)
     #     opt.batch_size = batch_size
 
-    # Train
-    train_dataset, train_pre = get_dataset(train_path,
-                                    train_pre,
-                                    img_size=imgsz,
-                                    logger=logger,
-                                    single_cls=single_cls,
-                                    bgr=opt.bgr,
-                                    stride=gs,
-                                    pad=.0,
-                                    prefix=colorstr('train: '),
-                                    filter_str=opt.filter_str,
-                                    filter_bkg=opt.ignore_bkg,
-                                    select_class=select_class_tuple(data_dict))
-
-    mlc = 0  # int(np.concatenate(train_dataset.labels, 0)[:, 0].max())  # max label class
-    assert mlc < nc, f'Label class {mlc} exceeds nc={nc} in {data}. Possible class labels are 0-{nc - 1}'
 
     # Val
     val_dataset, val_pre = get_dataset(val_path,
@@ -132,19 +108,54 @@ def before_train(hyp, opt, logger):
                                       prefix=colorstr('val: '),
                                       filter_str=opt.filter_str,
                                       filter_bkg=opt.ignore_bkg,
-                                      select_class=select_class_tuple(data_dict))
+                                      select_class=select_class_tuple(data_dict),
+                                      origin_sample=getattr(opt, "origin_sample", 1.))
+
+    # Train
+    if train_path is not None:
+        train_dataset, train_pre = get_dataset(train_path,
+                                               train_pre,
+                                               img_size=imgsz,
+                                               logger=logger,
+                                               single_cls=single_cls,
+                                               bgr=opt.bgr,
+                                               stride=gs,
+                                               pad=.0,
+                                               prefix=colorstr('train: '),
+                                               filter_str=opt.filter_str,
+                                               filter_bkg=opt.ignore_bkg,
+                                               select_class=select_class_tuple(data_dict))
+    else:
+        train_dataset = val_dataset
+        for k in [ 'img_size', "gray", "pad", "stride"]:
+            train_pre[k] = train_pre.get(k, val_pre[k])
+        train_pre['mosaic'] = train_pre.get('mosaic', 0.3) if train_pre['augment'] and not train_pre['rect'] else 0
+        if  getattr(opt, "train_sample_portion", 0.8) != 1:
+            all_dataset = deepcopy(val_dataset)
+            t_v_dataset = [[] for _ in range(2)]
+            opt.train_sample_portion = 1
+            opt.val_sample_portion = 1
+            n = len(all_dataset)  # number of files
+            random.seed(0)  # for reproducibility
+            split_weights = (0.8, 0.2)
+            indices = random.choices([0, 1], weights=split_weights, k=n)
+            for i, f in zip(indices, all_dataset):
+                t_v_dataset[i].append(f)
+            train_dataset, val_dataset = t_v_dataset
 
 
+
+    mlc = 0  # int(np.concatenate(train_dataset.labels, 0)[:, 0].max())  # max label class
+    assert mlc < nc, f'Label class {mlc} exceeds nc={nc} in {data}. Possible class labels are 0-{nc - 1}'
 
     print_log(f'Image sizes {imgsz} train, {imgsz} val\n'
-              f"Logging results to {colorstr('bold', save_dir)}\n", logger)
+              f"Logging results to {colorstr('bold', opt.save_dir)}\n", logger)
 
     return  opt, train_dataset, train_pre, val_dataset, val_pre
 
 def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_rank=-1, node=-1, world_size=1):
 
-    save_dir, evolve, data, hyp, weights, cfg, resume, noval, nosave, workers, freeze = Path(opt.save_dir), opt.evolve,\
-            opt.data, opt.hyp, opt.weights, opt.cfg, opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze
+    evolve, data, hyp, weights, cfg, resume, noval, nosave, workers, freeze = opt.evolve, opt.data, opt.hyp, opt.weights, opt.cfg, opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze
 
     epochs, batch_size, single_cls, imgsz, gs, data_dict = opt.epochs, opt.batch_size, opt.single_cls, \
                                                   opt.imgsz, opt.gs, opt.data_dict
@@ -152,11 +163,7 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
         teacher_net = attempt_load(opt.teacher, device)
     else:
         teacher_net = None
-    # Directories
-    w = save_dir / 'weights'  # weights dir
-    (w.parent if evolve else w).mkdir(parents=True, exist_ok=True)  # make dir
-    last, best = w / 'last.pt', w / 'best.pt'
-    best_pt, best_rt = w / 'best_precision.pt', w / 'best_recall.pt'
+
     best_p, best_r = 0., 0.
     start_epoch, best_fitness = 0, 0.0
     # Config
@@ -166,6 +173,20 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
 
     # callback only in local_rank = 0
     if node in [-1, 0] and local_rank in [-1, 0]:
+        # Directories
+        save_dir = Path(opt.save_dir)
+        w = save_dir / 'weights'  # weights dir
+        (w.parent if evolve else w).mkdir(parents=True, exist_ok=True)  # make dir
+        last, best = w / 'last.pt', w / 'best.pt'
+        best_pt, best_rt = w / 'best_precision.pt', w / 'best_recall.pt'
+        print_log(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()), logger)
+        # Save run settings
+        if not evolve:
+            with open(save_dir / 'hyp.yaml', 'w') as f:
+                yaml.safe_dump(hyp, f, sort_keys=False)
+            with open(save_dir / 'opt.yaml', 'w') as f:
+                yaml.safe_dump(vars(opt), f, sort_keys=False)
+
         callbacks = Callback(save_dir, opt, logger=logger)  # callback instance
     else:
         callbacks =None
@@ -408,9 +429,8 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
 
     # DDP mode
     if cuda and node != -1:
-            # model = DDP(model, device_ids=[local_rank], output_device=local_rank)
-
-            model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
+        # model = DDP(model, device_ids=[local_rank], output_device=local_rank)
+        model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=getattr(opt, 'find_unused_parameters', False))
 
     model.nc = hyp['nc']
     model.names = hyp['names']
@@ -510,7 +530,8 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
             # print(logger.handlers)
             # if node in [-1,0] and local_rank in [-1,0]:
             # if len(logger.handlers):
-            if logger.level==20:
+            #if logger.level==20:
+            if local_rank in [-1, 0]:
                 print_log(f"{datetime.now().strftime('%Y-%m-%d_%H:%M:%S')}", logger)
                 pbar = tqdm(pbar, total=nb, ncols=200, bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}')  # progress bar
             optimizer.zero_grad()

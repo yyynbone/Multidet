@@ -110,6 +110,10 @@ class C3Ghost(C3):
         self.m = nn.Sequential(*(GhostBottleneck(c_, c_) for _ in range(n)))
 
 class GhostConv(nn.Module):
+    """
+    第一步，使用少量卷积核进行卷积操作（比如正常用64个，这里就用32个，从而减少一半计算量）
+    第二步，使用3×3或5×5的卷积核进行逐通道卷积操作（Cheap operations）
+    """
     # Ghost Convolution https://github.com/huawei-noah/ghostnet
     def __init__(self, c1, c2, k=1, s=1, g=1, act=True):  # ch_in, ch_out, kernel, stride, groups
         super().__init__()

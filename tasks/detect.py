@@ -105,7 +105,7 @@ def run(weights='checkpoints/zjs_s16.pt',  # model.pt path(s)
         #     dataset = LoadImages(source, img_size=imgsz, stride=stride, auto=False, is_bgr=is_bgr)
         # else:
         #     dataset = LoadImages(source, img_size=imgsz, stride=stride, auto=False, is_bgr=is_bgr)
-        dataset = LoadImages(source, img_size=imgsz, stride=4, auto=False, is_bgr=is_bgr, slide_crop=crop_imgsz)
+        dataset = LoadImages(source, img_size=imgsz, stride=4, auto=False, is_bgr=is_bgr, slide_crop=crop_imgsz, resize=getattr(opt, 'resize', None))
         bs = 1  # batch_size
     vid_path, vid_writer = [None] * bs, [None] * bs
 
@@ -141,7 +141,7 @@ def run(weights='checkpoints/zjs_s16.pt',  # model.pt path(s)
         dt[0] += t2 - t1
 
         # Inference
-        visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
+        visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize and dataset.mode == 'image' else False
         head_out = model(im, augment=augment, visualize=visualize)
         pred, da_seg_out = head_out[model.out_det_from]
         t3 = time_sync()
@@ -227,7 +227,10 @@ def run(weights='checkpoints/zjs_s16.pt',  # model.pt path(s)
                 im0 = annotator.result()
                 if view_img:
                     cv2.imshow(str(p), im0)
-                    cv2.waitKey(1)  # 1 millisecond
+                    if dataset.mode == 'image':
+                        cv2.waitKey(0)
+                    else:
+                        cv2.waitKey(1)  # 1 millisecond
 
                 # Save results (image with detections)
                 if save_img:
@@ -260,12 +263,18 @@ def run(weights='checkpoints/zjs_s16.pt',  # model.pt path(s)
 
 def parse_opt():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default= 'results/train/drone/zjdet_small_only_big/exp4/weights/best.pt', help='model path(s)')
+    parser.add_argument('--weights', type=str, default= 'results/train/drone\zjdet_bocat\exp/weights/best.pt', help='model path(s)')
     parser.add_argument('--cfg', default=None, help='model yaml path(s)')
     parser.add_argument('--source', type=str, default= '../data/visdrone/video.mp4', help='file/dir/URL/glob, 0 for webcam')
-    parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[270, 240], help='inference size h,w')
-    parser.add_argument('--crop-imgsz', default=[270, 140], help='slide crop a big picture or not')
-    parser.add_argument('--conf-thres', type=float, default=0.25, help='confidence threshold')
+    # parser.add_argument('--source', type=str, default='images/0000197_01958_d_0000151-480_960_720_1080.jpg',
+    #                     help='file/dir/URL/glob, 0 for webcam')
+    # parser.add_argument('--resize', default=[544, 960], help='slide crop a big picture or not')
+    # parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[544, 960],
+    #                     help='inference size h,w')
+    # parser.add_argument('--crop-imgsz', default=[360, 640], help='slide crop a big picture or not')
+    parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[540, 960],
+                        help='inference size h,w')
+    parser.add_argument('--conf-thres', type=float, default=0.4, help='confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.6, help='NMS IoU threshold')
     parser.add_argument('--max-det', type=int, default=100, help='maximum detections per image')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
@@ -294,6 +303,7 @@ def parse_opt():
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     opt.view_img = True
+    opt.visualize = True
     # opt.slide_crop = True
     # opt.device = 'cpu'
     # opt.imgsz = [960,544]

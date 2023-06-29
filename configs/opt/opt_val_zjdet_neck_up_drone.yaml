@@ -1,0 +1,28 @@
+weights:
+  - results/train/drone_crop/zjdet_neck_up/exp3/weights/best.pt
+
+data: drone.yaml
+data_prefile: data_preprocess.yaml
+batch_size: 64 # for 640*640 64
+bgr: 1
+last_conf: [0.3, 0.4]
+visual_matched: True
+save_txt: True
+save_conf: True
+save_json: True
+imgsz:
+- 90
+- 120
+div_area:
+- 5
+- 10
+- 15
+
+
+val_cropped_imgsz: [360, 480]
+slide_crop: True
+# crop_sample_portion: 0.1
+#origin_sample: 0.1
+#train_sample_portion: 1. # random select sample
+val_sample_portion: .1 # random select sample
+ignore_bkg: True

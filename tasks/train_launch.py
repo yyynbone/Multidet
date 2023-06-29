@@ -73,7 +73,7 @@ def parse_opt(known=False):
     parser.add_argument('--node', type=int, default=0, help='computer node')
     parser.add_argument('--addr', type=str, default='localhost', help='computer addr')
     parser.add_argument('--port', type=int, default=12345, help='computer addr')
-    parser.add_argument('--world-size', type=int, default=4, help='computer gpu count')
+    parser.add_argument('--world-size', type=int, default=8, help='computer gpu count')
 
     # Weights & Biases arguments
     parser.add_argument('--entity', default=None, help='W&B: Entity')
@@ -86,7 +86,7 @@ def parse_opt(known=False):
     return opt
 
 
-def ready(opt):
+def ready(opt, local_rank=-1):
     if opt.project == '':
         data_file = Path(opt.data).stem
         cfg_file = Path(opt.cfg).stem
@@ -107,21 +107,27 @@ def ready(opt):
         if opt.evolve:
             opt.project = str(ROOT / 'results/evolve')
             opt.exist_ok, opt.resume = opt.resume, False  # pass resume to exist_ok and disable resume
-        opt.save_dir = str(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))
+        if local_rank in [-1, 0]:
+            opt.save_dir = str(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))
 
         # print("now we in rank", local_rank) # runs in each rank
     opt.data_prefile = check_yaml(opt.data_prefile)
-    Path(opt.save_dir).mkdir(parents=True, exist_ok=True)
-    logger = set_logging(name=FILE.stem, filename=Path(Path(opt.save_dir) / 'train.log'))
-    print_log(f"{datetime.now().strftime('%Y-%m-%d_%H:%M:%S')} Now we start training in  {logger}", logger)
-    print_args(FILE.stem, opt, logger=logger)
+    if local_rank in [-1, 0]:
+        Path(opt.save_dir).mkdir(parents=True, exist_ok=True)
+        logger = set_logging(name=FILE.stem, filename=Path(Path(opt.save_dir) / 'train.log'), rank=local_rank)
+        print_log(f"{datetime.now().strftime('%Y-%m-%d_%H:%M:%S')} Now we start training in  {logger}", logger)
+        print_args(FILE.stem, opt, logger=logger)
+    else:
+        opt.save_dir =None
+        logger =None
+
     # train_dataset, val_dataset = before_train(opt.hyp, opt, logger)
     # return opt, train_dataset, val_dataset
     opt, train_data, train_preprocess,  val_data, val_preprocess = before_train(opt.hyp, opt, logger)
     return opt, train_data, train_preprocess, val_data, val_preprocess
 
 def main(local_rank, local_size, opt, train_data, train_preprocess, val_data, val_preprocess):
-    # print('now we are in local_rank', local_rank)
+    # print('now we are in local_rank', local_rank, opt.node)
     # local_rank could be 0-7
     addr, port, node, world_size = opt.addr, opt.port, opt.node, opt.world_size
     # set logger save to file:
@@ -136,11 +142,14 @@ def main(local_rank, local_size, opt, train_data, train_preprocess, val_data, va
         assert not opt.evolve, '--evolve argument is not compatible with DDP training'
         torch.cuda.set_device(local_rank)
         device = torch.device('cuda', local_rank)
-        Rank = local_rank+node*local_size
-        dist.init_process_group(backend="nccl" if dist.is_nccl_available() else "gloo",
-                                init_method="tcp://{}:{}".format(addr, port),
-                                rank=Rank,
-                                world_size=world_size)
+
+        dist.init_process_group(backend="nccl" if dist.is_nccl_available() else "gloo")
+        # Rank = local_rank+node*local_size
+        # # print('now we are in local_rank', Rank, world_size)
+        # dist.init_process_group(backend="nccl" if dist.is_nccl_available() else "gloo",
+        #                         init_method="tcp://{}:{}".format(addr, port),
+        #                         rank=Rank,
+        #                         world_size=world_size)   # 这个在torch launch 里卡住不动， 即init_method,rank, world_size都不要设置
     else:
         opt.device = str(opt.device).strip().lower().replace('cuda:', '')  # to string, 'cuda:0' to '0'
         if opt.device == 'cpu':
@@ -151,10 +160,11 @@ def main(local_rank, local_size, opt, train_data, train_preprocess, val_data, va
             device = f'cuda:{opt.device}'
         device = torch.device(device)
         # device = select_device(opt.device, batch_size=opt.batch_size, rank=local_rank)
-    with torch_distributed_zero_first(local_rank):   # multiprocess all start
+    if local_rank in [-1, 0]:
         logger = set_logging(name=FILE.stem, filename=Path(Path(opt.save_dir) / 'train.log'), rank=local_rank)  # 需要重新定义
             # logger.setLevel(20) # 20means logging.INFO, 但此时handle全部清空，即无file handle
-
+    else:
+        logger = None
     # Train
     if not opt.evolve:
         _ = train(opt, logger, device, train_data, train_preprocess, val_data, val_preprocess, local_rank, node, world_size)
@@ -258,14 +268,11 @@ def run(**kwargs):
 if __name__ == "__main__":
     opt = parse_opt()
     # main(opt)
-    devices = set_cuda_visible_device(opt.device)
-    # print(os.environ['CUDA_VISIBLE_DEVICES'])
-    gpus = len(devices)
-    if opt.world_size != gpus:
-        opt.world_size = gpus #gpus
-    
-    opt, train_data, train_preprocess, val_data, val_preprocess = ready(opt)
-    local_rank = opt.local_rank
+    # local_rank = opt.local_rank
+    local_rank = int(os.environ['LOCAL_RANK'])
+    gpus = int(os.environ['WORLD_SIZE'])
+
+    opt, train_data, train_preprocess, val_data, val_preprocess = ready(opt, local_rank)
     main(local_rank, gpus, opt, train_data, train_preprocess, val_data, val_preprocess)
 
 

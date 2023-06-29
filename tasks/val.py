@@ -77,11 +77,14 @@ def main(opt):
     #             weight_list.append(weight)
     #     else:
     #         weight_list.append(opt.weights)
-    for temp_weight in temp_weights:
-        if os.path.isdir(temp_weight):
-            weight_list += glob(f'{temp_weight}/**/*.pt', recursive=True)
-        else:
-            weight_list.append(temp_weight)
+    if isinstance(temp_weights, list):
+        for temp_weight in temp_weights:
+            if os.path.isdir(temp_weight):
+                weight_list += glob(f'{temp_weight}/**/*.pt', recursive=True)
+            else:
+                weight_list.append(temp_weight)
+    else:
+        weight_list.append(temp_weights)
 
     for opt.weights in weight_list:
         opt.device = select_device(opt.device, batch_size=opt.batch_size)
@@ -127,7 +130,7 @@ def main(opt):
         for opt.task in tasks:
 
             data_pre = data_pres[opt.task]
-            task_data, data_pre = get_dataset(opt.data[opt.task], data_pre,  opt.imgsz, opt.batch_size, opt.logger,
+            task_data, data_pre = get_dataset(opt.data[opt.task], data_pre,  opt.imgsz, opt.logger,
                                           stride=int(stride),
                                           pad=.0,
                                           prefix=f'{opt.task}: ',
@@ -137,16 +140,16 @@ def main(opt):
                                           select_class=select_class_tuple(opt.data))
             dataset = LoadImagesAndLabels(data_pre,
                                           task_data,
+                                          batch_size=opt.batch_size,
                                           logger=opt.logger,
                                           bkg_ratio=getattr(opt, "bkg_ratio", 0),
                                           obj_mask=getattr(opt,"val_obj_mask", 0),
                                           sample_portion=getattr(opt, "val_sample_portion", 1),
-                                          pix_area=getattr(opt, 'pix_area', None)
+                                          pix_area=getattr(opt, 'pix_area', None),
+                                          cropped_imgsz=getattr(opt, "val_cropped_imgsz", False),
+                                          slide_crop=getattr(opt, "slide_crop", False)
                                           )
 
-            dataset.cropped_imgsz = getattr(opt, "val_cropped_imgsz", False)
-            dataset.slide_crop = getattr(opt, "slide_crop", False)
-            # dataset.index_shuffle()
             batch_size = min(opt.batch_size, len(dataset))
             opt.dataloader = SuffleLoader(dataset,
                           batch_size=batch_size,
@@ -155,7 +158,7 @@ def main(opt):
                           sampler=None,
                           pin_memory=True,
                           collate_fn=LoadImagesAndLabels.collate_fn)
-            opt.dataloader.shuffle_index(-1)
+            opt.dataloader.shuffle_index()
 
             # run normally
 
@@ -171,7 +174,19 @@ def main(opt):
 
     torch.cuda.empty_cache()
 
-
+def select():
+    import random
+    import shutil
+    from tqdm import tqdm
+    images = '/home/workspace/data/visdrone/images/slide_crop_480_360'
+    save = '/home/workspace/data/visdrone/images/select_slide_crop_480_360'
+    Path(save).mkdir()
+    for p in tqdm(os.listdir(images)):
+        if random.randint(1,1000)<20:
+            shutil.copy(Path(images)/p, Path(save)/p)
 if __name__ == "__main__":
     opt = parse_opt()
     main(opt)
+
+
+

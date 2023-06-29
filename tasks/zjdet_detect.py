@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import math
+from pathlib import Path
 from utils import Annotator
 
 def autopad(k, p=None, d=1):  # kernel, padding, dilation
@@ -66,6 +67,21 @@ class C3(nn.Module):
         # return self.cv3(x_final)
         return self.cv3(torch.cat((self.m(self.cv1(x)), self.cv2(x)), dim=1))
 
+class Bottleneckcat(nn.Module):
+    # Standard bottleneck
+    def __init__(self, c1, c2, shortcut=True, g=1, k=(1, 3, 3), e=0.5):  # ch_in, ch_out, shortcut, groups, kernels, expand
+        super().__init__()
+        c_ = int(c2 * e)  # hidden channels
+        self.cv1 = Conv(c1, c_, k[0], 1)
+        self.cv2 = Conv(c_, c2, k[1], 1, g=g)
+        self.cv3 = Conv((c1+c2), c2, 1, 1)
+        self.shortcut = shortcut
+
+
+    def forward(self, x):
+        y = self.cv2(self.cv1(x))
+        cat = torch.cat((x,y),dim=1)
+        return self.cv3(cat) if self.shortcut else y
 
 class SPPF(nn.Module):
     # Spatial Pyramid Pooling - Fast (SPPF) layer for YOLOv5 by Glenn Jocher
@@ -89,6 +105,18 @@ class Concat(nn.Module):
         self.d = dimension
 
     def forward(self, x):
+        # return torch.cat(x, self.d)
+        bs, c, h, w = x[1].shape
+        _, u_c, u_h, u_w = x[0].shape
+        f_bais = h * w - u_h * u_w
+        if f_bais > 0:
+            pad = torch.zeros((bs, u_c, f_bais), dtype=x[0].dtype, device=x[0].device)
+            new = torch.concat([x[0].reshape(bs, u_c, -1), pad], dim=-1)
+            x[0] = new.reshape(bs, u_c, h, w)
+        elif f_bais < 0:
+            new = x[0].reshape(bs, u_c, -1)[:, :, :h * w]
+            x[0] = new.reshape(bs, u_c, h, w)
+
         return torch.cat(x, self.d)
 
 class Detect(nn.Module):
@@ -128,6 +156,7 @@ class Detect(nn.Module):
         return torch.cat(z, 1)
 
     def _make_grid(self, nx=20, ny=20, i=0):
+        print(self.anchors)
         d = self.anchors[i].device
         yv, xv = torch.meshgrid([torch.arange(ny).to(d), torch.arange(nx).to(d)], indexing='ij')
         grid = torch.stack((xv, yv), 2).expand((1, self.na, ny, nx, 2)).float()
@@ -146,41 +175,119 @@ class Detect(nn.Module):
             b.data[:, 5:] += math.log(0.6 / (m.nc - 0.999999)) if cf is None else torch.log(cf / cf.sum())  # cls
             mi.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
 
+def initialize_weights(model):
+    for m in model.modules():
+        t = type(m)
+        if t is nn.Conv2d:
+            pass  # nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+        elif t is nn.BatchNorm2d:
+            m.eps = 1e-3
+            m.momentum = 0.03
+        elif t in [nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU]:
+            m.inplace = True
 
 class Model(nn.Module):
     def __init__(self):
         super().__init__()
-        anchors = [[8, 15, 18, 30, 25, 15], [32, 61, 62, 45, 59, 119], [116, 90, 156, 198, 373, 326]]
+        # anchors = [[4,2, 3,6, 12,5], [10,8, 13,25, 38,18], [28,34, 57,33, 49,60]]
+        # self.layers = [Conv(3, 32, k=3, s=1, p=0),  # 0-p1/2
+        #                Conv(32, 64, k=3, s=2),  #1-p2/4
+        #                C3(64, 64, n=2),
+        #                Conv(64, 128, k=3, s=2),  # 3-p3/8
+        #                C3(128, 128, n=4),
+        #                Conv(128, 256, k=3, s=2),  #5-p4/16
+        #                C3(256, 256, n=6),
+        #                Conv(256, 512, k=3, s=2),  #7-p5/32
+        #                C3(512, 512, n=2),
+        #                SPPF(512, 512, k=5),  #9
+        #
+        #                Conv(512, 512, k=1, s=1),
+        #                C3(512, 512, n=2,  shortcut=False),
+        #                Conv(512, 256, k=1, s=1),
+        #                nn.Upsample(None, 2, 'nearest'),
+        #                Concat(),  # cat [-1,6], backbone p4
+        #                C3(512, 256, n=2, shortcut=False),  #12
+        #                Conv(256, 128, k=1, s=1),
+        #                nn.Upsample(None, 2, 'nearest'),
+        #                Concat(),  # cat [-1,4], backbone p3
+        #                C3(256, 128, n=2, shortcut=False),
+        #
+        #                Conv(128, 64, k=1, s=1),
+        #                nn.Upsample(None, 2, 'nearest'),
+        #                Concat(),  # cat [-1,4], backbone p3
+        #                C3(128, 64, n=2, shortcut=False),
+        #
+        #                Detect(nc=4, ch=(64, 128, 256), anchors=anchors),
+        #                ]
+        # self.cat_index = [(-1,6), (-1,4), (-1,2), (23,19,15)]
+        # stride = [2, 4, 8]
+
+        # anchors = [[8, 15, 18, 30, 25, 15], [32, 61, 62, 45, 59, 119], [116, 90, 156, 198, 373, 326]]
+        # # anchors = [[10, 8, 13, 25, 38, 18], [28, 34, 57, 33, 49, 60], [99, 52, 82, 103, 182, 113]]
+        # self.layers = [Conv(3, 32, k=6, s=2, p=2),  # 0-p1/2
+        #                Conv(32, 64, k=3, s=2),  #1-p2/4
+        #                C3(64, 64, n=2),
+        #                Conv(64, 128, k=3, s=2),  # 3-p3/8
+        #                C3(128, 128, n=4),
+        #                Conv(128, 256, k=3, s=2),  #5-p4/16
+        #                C3(256, 256, n=6),
+        #                Conv(256, 512, k=3, s=2),  #7-p5/32
+        #                C3(512, 512, n=2),
+        #                SPPF(512, 512, k=5),  #9
+        #
+        #                Conv(512, 512, k=1, s=1),
+        #                C3(512, 512, n=2,  shortcut=False),
+        #                Conv(512, 256, k=1, s=1),
+        #                nn.Upsample(None, 2, 'nearest'),
+        #                Concat(),  # cat [-1,6], backbone p4
+        #                C3(512, 256, n=2, shortcut=False),  #12
+        #                Conv(256, 128, k=1, s=1),
+        #                nn.Upsample(None, 2, 'nearest'),
+        #                Concat(),  # cat [-1,4], backbone p3
+        #                C3(256, 128, n=2, shortcut=False),
+        #
+        #                Detect(nc=4, ch=(128, 256, 512), anchors=anchors),
+        #                ]
+        # self.cat_index = [(-1,6), (-1,4),(19,15,11)]
+        # stride = [8,16,32]
+
+        anchors = [[10,8, 13, 25, 38, 18], [28, 34, 57, 33, 49, 60], [99, 52, 82,103, 182,113]]
         self.layers = [Conv(3, 32, k=6, s=2, p=2),  # 0-p1/2
                        Conv(32, 64, k=3, s=2),  #1-p2/4
-                       C3(64, 64, n=2),
+                       Bottleneckcat(64, 64),
                        Conv(64, 128, k=3, s=2),  # 3-p3/8
-                       C3(128, 128, n=4),
+                       Bottleneckcat(128, 128),
                        Conv(128, 256, k=3, s=2),  #5-p4/16
-                       C3(256, 256, n=6),
+                       Bottleneckcat(256, 256),
                        Conv(256, 512, k=3, s=2),  #7-p5/32
-                       C3(512, 512, n=2),
+                       Bottleneckcat(512, 512),
                        SPPF(512, 512, k=5),  #9
 
                        Conv(512, 512, k=1, s=1),
-                       C3(512, 512, n=2,  shortcut=False),
+                       Bottleneckcat(512, 512,  shortcut=False),
                        Conv(512, 256, k=1, s=1),
                        nn.Upsample(None, 2, 'nearest'),
                        Concat(),  # cat [-1,6], backbone p4
-                       C3(512, 256, n=2, shortcut=False),  #12
+                       Bottleneckcat(512, 256,  shortcut=False),  #12
                        Conv(256, 128, k=1, s=1),
                        nn.Upsample(None, 2, 'nearest'),
                        Concat(),  # cat [-1,4], backbone p3
-                       C3(256, 128, n=2, shortcut=False),
+                       Bottleneckcat(256, 128, shortcut=False),
 
                        Detect(nc=4, ch=(128, 256, 512), anchors=anchors),
                        ]
         self.cat_index = [(-1,6), (-1,4),(19,15,11)]
+        stride = [8,16,32]
+
         self.save_index = set([ind for inds in self.cat_index for ind in inds if ind!=-1])
         self.save_x = [0 for _ in range(len(self.layers))]
         self.model = nn.Sequential(*self.layers)
-        self.stride = self.model[-1].stride = torch.Tensor([8,16,32])
+        self.stride = self.model[-1].stride = torch.Tensor(stride)
         self.nc = self.model[-1].nc
+        if hasattr(self.model[-1], 'bias_init'):
+            self.model[-1].bias_init
+        initialize_weights(self)
+
 
     def forward(self, x, **kargs):
         cat_i = 0
@@ -195,10 +302,10 @@ class Model(nn.Module):
                 self.save_x[i] = x
         return x
 
-def convert_model():
+def convert_model(weight):
     from utils import intersect_dicts
     device = 'cpu'
-    weight = '/home/zjlab/Workspace/Hzh/zjdet/results/train/228/zjdet_neck/exp/weights/best_precision.pt'
+
     model = Model().to(device)
     ckpt = torch.load(weight, device)
     csd = ckpt['model'].float().state_dict()
@@ -209,10 +316,10 @@ def convert_model():
     print(f'Transferred {len(csd)}/{len(model.state_dict())} items from {weight}')
     torch.save(model, '../convert_model.pt')
 
-def convert_statedict():
+def convert_statedict(weight, save_dir=''):
     from utils import intersect_dicts
     device = 'cpu'
-    weight = '../results/train/drone/zjdet_neck/exp2/weights/best.pt'
+
     model = Model().to(device)
     ckpt = torch.load(weight, device)
     csd = ckpt['model'].float().state_dict()
@@ -221,33 +328,32 @@ def convert_statedict():
     # print(csd)
     model.load_state_dict(csd, strict=False)
     print(f'Transferred {len(csd)}/{len(model.state_dict())} items from {weight}')
-    torch.save(model.state_dict(), '../drone_model_statedict.pt', _use_new_zipfile_serialization=False)
+    torch.save(model.state_dict(), save_dir, _use_new_zipfile_serialization=False)
 def draw_box(im, box, label, color=(0, 0, 255), txt_color=(255, 255, 255)):
-    lw = max(round(sum(im.shape) / 2 * 0.003), 2)
+    lw = max(round(sum(im.shape) / 2 * 0.001), 2)
+    font_size = lw / 3
     p1, p2 = (int(box[0]), int(box[1])), (int(box[2]), int(box[3]))
     cv2.rectangle(im, p1, p2, color, thickness=lw, lineType=cv2.LINE_AA)
     if label:
         tf = max(lw - 1, 1)  # font thickness
-        w, h = cv2.getTextSize(label, 0, fontScale=lw / 3, thickness=tf)[0]  # text width, height
+        w, h = cv2.getTextSize(label, 0, fontScale=font_size, thickness=tf)[0]  # text width, height
         outside = p1[1] - h - 3 >= 0  # label fits outside box
         p2 = p1[0] + w, p1[1] - h - 3 if outside else p1[1] + h + 3
         cv2.rectangle(im, p1, p2, color, -1, cv2.LINE_AA)  # filled
-        cv2.putText(im, label, (p1[0], p1[1] - 2 if outside else p1[1] + h + 2), 0, lw / 3, txt_color,
+        cv2.putText(im, label, (p1[0], p1[1] - 2 if outside else p1[1] + h + 2), 0, font_size, txt_color,
                     thickness=tf, lineType=cv2.LINE_AA)
     return  im
 
 if __name__ == '__main__':
     device = 'cpu'
-
-    # convert_model()
-    # convert_statedict()
-    weight = '../drone_model_statedict.pt'
-    state_dict = torch.load(weight, device)
-    model = Model()
-    model.load_state_dict(state_dict, strict=False)
-    model.eval()
-    im = torch.zeros(1, 3, 540, 960)
-    img_path = '../results/val/drone/zjdet_neck_exp2_best/exp/images/0000007_04999_d_0000036-400_1360_225_765.jpg'
+    # weight = '../results/train/drone/zjdet_neck/exp/weights/best.pt'
+    # state_weight = '../zjdet_neck_drone_sd.pt'
+    weight = '../results/train/drone/zjdet_bocat/exp/weights/best.pt'
+    state_weight = '../zjdet_bocat_drone_sd.pt'
+    img_size = (960, 540)
+    im = torch.zeros(1, 3, img_size[1], img_size[0])
+    # img_path = '../results/val/drone/zjdet_neck_exp2_best/exp/images/0000007_04999_d_0000036-400_1360_225_765.jpg'
+    img_path = '../../data/visdrone/images/train/0000071_04085_d_0000007.jpg'
     bgr = True
     import cv2
     if not bgr:
@@ -255,16 +361,40 @@ if __name__ == '__main__':
         im[0] = torch.tensor(img[:, :][None]/255.)
     else:
         img = cv2.imread(img_path)
+        img = cv2.resize(img, img_size, interpolation=cv2.INTER_LINEAR)
         im[0] = torch.tensor(img.transpose(2,0,1)/ 255.)
     start = time.time()
+    # # converted model
+    # convert_model(weight)
+    # conv_weight = '../convert_model.pt'
+    # model = torch.load(conv_weight, device)
+    # model.eval()
+    # pred = model(im)
 
+    # converted model statedict
+
+
+    convert_statedict(weight, state_weight)
+    state_dict = torch.load(state_weight, device)
+    model = Model()
+    model.load_state_dict(state_dict, strict=False)
+    model.eval()
     pred = model(im)
+
+
+    # ckpt = torch.load(weight, device)
+    # model = ckpt['model'].float()
+    # model.eval()
+    # pred = model(im)[0][0]
+
+
     print(pred.size())
     from utils import non_max_suppression
-    pred = non_max_suppression(pred, 0.4, 0.7,  None,  False, 1000)
+    pred = non_max_suppression(pred, 0.5, 0.6,  None,  False, 1000)
     # last conf filter
     # pred = [det[det[..., 4] >= 0.5] for det in pred]
-    print(pred)
+    pred_n = np.array([pre.detach().cpu().numpy() for pre in pred])[0]
+    np.savetxt(Path(img_path).stem + '.txt', pred_n, fmt='%.2f')
     end = time.time()
     print("####################")
     print(f'inference cost per image of {im.shape} %.2f ms'%((end-start)/20/16*1E3))

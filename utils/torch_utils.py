@@ -136,7 +136,7 @@ def fuse_conv_and_bn(conv, bn):
 
     # prepare filters
     w_conv = conv.weight.clone().view(conv.out_channels, -1)
-    w_bn = torch.diag(bn.weight.div(torch.sqrt(bn.eps + bn.running_var)))
+    w_bn = torch.diag(bn.weight.div(torch.sqrt(bn.eps + bn.running_var)))  #torch.diag 取矩阵对角线
     fusedconv.weight.copy_(torch.mm(w_bn, w_conv).view(fusedconv.weight.shape))
 
     # prepare spatial bias

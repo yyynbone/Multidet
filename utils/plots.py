@@ -164,7 +164,7 @@ def feature_visualization(x, module_type, stage, n=32, save_dir=Path('runs/detec
     n:              Maximum number of feature maps to plot
     save_dir:       Directory to save results
     """
-    if 'Detect' and 'Classify' not in module_type:
+    if np.array([m_t not in module_type.lower()  for m_t in ['detect', 'class']]).all() :
         batch, channels, height, width = x.shape  # batch, channels, height, width
         if height > 1 and width > 1:
             f = save_dir / f"stage{stage}_{module_type.split('.')[-1]}_features.png"  # filename
@@ -271,7 +271,7 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
             for j, box in enumerate(boxes.T.tolist()):
                 cls = classes[j]
                 color = colors(cls)
-                cls = names[cls] if names else cls
+                cls = names[cls] if names and len(names)>cls else cls
                 if labels or conf[j] > 0.25:  # 0.25 conf thresh
                     if seg_mask is None:
                         label = f'{cls}' if labels else f'{cls} {conf[j]:.1f}'

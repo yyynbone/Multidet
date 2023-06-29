@@ -131,7 +131,7 @@ class SuffleDist_Sample(distributed.DistributedSampler):
 
 
 def get_dataset(path, pre_process, img_size=640, logger=None, image_weights=False,
-            single_cls=False, stride=32, pad=0.0, prefix='', bgr=True, filter_str='', select_class=(),
+            single_cls=False, stride=32, pad=0.0, prefix='', bgr=True, filter_str='', select_class=(),origin_sample=1.,
              filter_bkg=False):
     if isinstance(img_size, int):
         img_size = (img_size, img_size)   # h, w
@@ -145,7 +145,6 @@ def get_dataset(path, pre_process, img_size=640, logger=None, image_weights=Fals
 
     pre_process['rect'] = rect
     pre_process['augment'] = augment
-    origin_sample = 1.
 
     img_files = select_image(path, filter_str=filter_str, remove_str='_mask', sample=origin_sample, bg_gain=1, obj_gain=1)
     assert img_files, f'{prefix}No images found'
@@ -174,7 +173,8 @@ def get_dataset(path, pre_process, img_size=640, logger=None, image_weights=Fals
     pre_process["gray"] = not bgr
     pre_process["pad"] = pad
     pre_process["stride"] = stride
-    results[0]['select_class'] = select_class
+    for r in results:
+        r['select_class'] = select_class
     return results, pre_process
 
 def filter_pix(labels,pix_area):
@@ -423,7 +423,7 @@ class LoadImagesAndLabels(Dataset):
         return torch.stack(imgs, 0), col_target, paths# , shapes
 
 class LoadImages(LoadImagesAndLabels):
-    def __init__(self, path, img_size=640, stride=32, auto=True, is_bgr=True, slide_crop=None):
+    def __init__(self, path, img_size=640, stride=32, auto=True, is_bgr=True, slide_crop=None, resize=None):
         pre_process = {'transform': {"resize": None,'adapt_pad':{'auto':auto, 'rectangle_stride': stride}} }
         self.gray = not is_bgr
         if isinstance(img_size, int):
@@ -451,6 +451,7 @@ class LoadImages(LoadImagesAndLabels):
         # super().__init__(pre_process, results)
         self.T = Transfrom(pre_process)
         self.slide_crop = slide_crop
+        self.resize = resize
 
 
     def __iter__(self):
@@ -485,7 +486,8 @@ class LoadImages(LoadImagesAndLabels):
             img0 = cv2.imread(path)  # BGR
             assert img0 is not None, f'Image Not Found {path}'
             s = f'image {self.count}/{self.nf} {path}: '
-
+        if self.resize is not None:
+            img0 = cv2.resize(img0, (self.resize[1], self.resize[0]), interpolation=cv2.INTER_LINEAR)
         result = initial_result(img0, self.img_size)
         if self.slide_crop is not None:
             imgs = []

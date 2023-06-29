@@ -12,8 +12,8 @@
 path: ../data/visdrone  # dataset root dir
 #train: labels/train.txt  # train images (relative to 'path') 118287 images
 #val: labels/val.txt  # train images (r elative to 'path') 5000 images
-# train: images/train # train images (relative to 'path') 169 images
-val: images/train  # train images (r elative to 'path') 61 images
+# train: images/slide_crop_240_180 # train images (relative to 'path') 169 images
+val: images/slide_crop_480_360  # train images (r elative to 'path') 61 images
 #  Classes
 #nc: 80  # number of classes
 #names: ['vehicle', 'trainstation', 'bridge', 'ship','airport', 'harbor', 'airplane', 'helipad', 'helicopter',
