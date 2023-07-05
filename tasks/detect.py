@@ -78,9 +78,10 @@ def run(weights='checkpoints/zjs_s16.pt',  # model.pt path(s)
         model.to(device)
     else:
         model = attempt_load(weights, map_location=device, cfg=cfg, logger=logger)
-        names =  {k: v for k, v in enumerate(model.names if hasattr(model, 'names') else model.module.names)}
-
+        names = getattr(model, 'names', None)
         model = model.module if hasattr(model, 'module') else model
+        names = getattr(model, 'names', list(range(model.nc)) if names is None else names)
+        names = {k: v for k, v in enumerate(names)}
 
     stride = 1 # int(max(model.stride)) if hasattr(model, 'stride') else 16
 
@@ -149,11 +150,11 @@ def run(weights='checkpoints/zjs_s16.pt',  # model.pt path(s)
         # pred_j = {'pred':[pred_i.cpu().numpy().tolist() for pred_i in pred]}
         if len(pred[0])==1:
             pred_out = torch.where(pred > last_conf, torch.ones_like(pred), torch.zeros_like(pred))
+            dt[2] += time_sync() - t3
             for i in range(len(pred)):
                 print_log(
                     f"predict value is {pred[i][0]}  as {['background', 'object'][int(pred_out[i])]}",
                     logger)
-                dt[2] += time_sync() - t3
                 seen+=1
                 map_visualization(da_seg_out[i].sigmoid(), f_path=visualize)
                 if save_img:
@@ -263,19 +264,22 @@ def run(weights='checkpoints/zjs_s16.pt',  # model.pt path(s)
 
 def parse_opt():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default= 'results/train/drone\zjdet_bocat\exp/weights/best.pt', help='model path(s)')
+    parser.add_argument('--weights', type=str, default= 'results/train/drone/zjdet_v8/exp/weights/best.pt', help='model path(s)')
+    # results/train/drone/zjdet_neck/exp/weights/best.pt
+    # checkpoints/zjs_v5s_pretrained.pt
+    # results/train/drone/yolov5s/exp/weights/best.pt
     parser.add_argument('--cfg', default=None, help='model yaml path(s)')
-    parser.add_argument('--source', type=str, default= '../data/visdrone/video.mp4', help='file/dir/URL/glob, 0 for webcam')
-    # parser.add_argument('--source', type=str, default='images/0000197_01958_d_0000151-480_960_720_1080.jpg',
-    #                     help='file/dir/URL/glob, 0 for webcam')
+    # parser.add_argument('--source', type=str, default= '../data/visdrone/video.mp4', help='file/dir/URL/glob, 0 for webcam')
+    parser.add_argument('--source', type=str, default='../data/visdrone/images/train/9999938_00000_d_0000436.jpg',
+                        help='file/dir/URL/glob, 0 for webcam')
     # parser.add_argument('--resize', default=[544, 960], help='slide crop a big picture or not')
     # parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[544, 960],
     #                     help='inference size h,w')
-    # parser.add_argument('--crop-imgsz', default=[360, 640], help='slide crop a big picture or not')
+    parser.add_argument('--crop-imgsz', default=[540, 960], help='slide crop a big picture or not')
     parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[540, 960],
                         help='inference size h,w')
-    parser.add_argument('--conf-thres', type=float, default=0.4, help='confidence threshold')
-    parser.add_argument('--iou-thres', type=float, default=0.6, help='NMS IoU threshold')
+    parser.add_argument('--conf-thres', type=float, default=0.25, help='confidence threshold')
+    parser.add_argument('--iou-thres', type=float, default=0.45, help='NMS IoU threshold')
     parser.add_argument('--max-det', type=int, default=100, help='maximum detections per image')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--view-img', action='store_true', help='show results')
@@ -297,13 +301,13 @@ def parse_opt():
     parser.add_argument('--half', action='store_true', help='use FP16 half-precision inference')
     # parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
     # parser.add_argument('--fuse', default=1, type=int, help='fuse or not')
-    parser.add_argument('--last-conf', type=float, default=0.5, help='last conf thresh after nms')
+    parser.add_argument('--last-conf', type=float, default=0.3, help='last conf thresh after nms')
     parser.add_argument('--is-bgr', default=1, type=int, help='input channel is 3 or not')
     parser.add_argument('--model-class', default=None, help='model class such as yolov5 yolov6 yolov8 etc')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     opt.view_img = True
-    opt.visualize = True
+    # opt.visualize = True
     # opt.slide_crop = True
     # opt.device = 'cpu'
     # opt.imgsz = [960,544]

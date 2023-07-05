@@ -138,14 +138,15 @@ class Bottleneckcat(nn.Module):
         c_ = int(c2 * e)  # hidden channels
         self.cv1 = Conv(c1, c_, k[0], 1)
         self.cv2 = Conv(c_, c2, k[1], 1, g=g)
-        self.cv3 = Conv((c1+c2), c2, 1, 1)
-        self.shortcut = shortcut
+        self.shortcat = shortcut
+        if shortcut:
+            self.cv3 = Conv((c1 + c2), c2, 1, 1)
 
 
     def forward(self, x):
         y = self.cv2(self.cv1(x))
-        cat = torch.cat((x,y),dim=1)
-        return self.cv3(cat) if self.shortcut else y
+        return self.cv3( torch.cat((x,y),dim=1) ) if self.shortcut else y
+
 
 class Contract(nn.Module):
     # Contract width-height into channels, i.e. x(1,64,80,80) to x(1,256,40,40)

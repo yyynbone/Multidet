@@ -75,15 +75,35 @@ class Detect(nn.Module):
             if not self.training:  # inference
                 if self.grid[i].shape[2:4] != x[i].shape[2:4]:
                     self.grid[i], self.anchor_grid[i] = self._make_grid(nx, ny, i)
-
                 y = x[i].sigmoid()
 
                 y[..., 0:2] = (y[..., 0:2] * 2 - 0.5 + self.grid[i]) * self.stride[i]  # xy
                 y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i]  # wh
 
                 z.append(y.view(bs, -1, self.no))
-
         return x if self.training else (torch.cat(z, 1), x)
+
+    def test(self, x):
+        z = []  # inference output
+        for i in range(self.nl):
+            bs, _, ny, nx, _ = x[i].shape   # xi(bs,255,20,20) to xi(bs,3,20,20,85)
+            if self.grid[i].shape[2:4] != x[i].shape[2:4]:
+                self.grid[i], self.anchor_grid[i] = self._make_grid(nx, ny, i)
+
+            y = x[i].sigmoid()
+            y[..., 0:2] = (y[..., 0:2] * 2 - 0.5 + self.grid[i]) * self.stride[i]  # xy
+            y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i]  # wh
+            z.append(y.view(bs, -1, self.no))
+        return torch.cat(z, 1)
+
+    def get_logit(self, x):
+        logits_ = []
+        for i in range(self.nl):
+            bs, _, ny, nx, _ = x[i].shape  # xi(bs,255,20,20) to xi(bs,3,20,20,85)
+            logits = x[i][..., 4:]  # conf, cls
+            logits_.append(logits.view(bs, -1, self.no - 4))
+        logits_ = torch.cat(logits_, 1)
+        return logits_
 
     def _make_grid(self, nx=20, ny=20, i=0):
         d = self.anchors[i].device

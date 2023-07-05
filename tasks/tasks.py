@@ -20,7 +20,7 @@ import torch.distributed as dist
 
 from loss import *
 from models  import (attempt_load, Model)
-from dataloader import check_anchors, check_train_batch_size, LoadImagesAndLabels, get_dataset, SuffleLoader, SuffleDist_Sample
+from dataloader import check_anchors, check_train_batch_size, train_val_split, LoadImagesAndLabels, get_dataset, SuffleLoader, SuffleDist_Sample
 from utils.lr_schedule import *
 from utils import ( check_dataset, check_img_size, check_suffix, colorstr, time_sync, init_seeds, var_size,
                     labels_to_class_weights, labels_to_image_weights, strip_optimizer, cal_flops, intersect_dicts,
@@ -132,17 +132,9 @@ def before_train(hyp, opt, logger):
         train_pre['mosaic'] = train_pre.get('mosaic', 0.3) if train_pre['augment'] and not train_pre['rect'] else 0
         if  getattr(opt, "train_sample_portion", 0.8) != 1:
             all_dataset = deepcopy(val_dataset)
-            t_v_dataset = [[] for _ in range(2)]
             opt.train_sample_portion = 1
             opt.val_sample_portion = 1
-            n = len(all_dataset)  # number of files
-            random.seed(0)  # for reproducibility
-            split_weights = (0.8, 0.2)
-            indices = random.choices([0, 1], weights=split_weights, k=n)
-            for i, f in zip(indices, all_dataset):
-                t_v_dataset[i].append(f)
-            train_dataset, val_dataset = t_v_dataset
-
+            train_dataset, val_dataset = train_val_split(all_dataset, split_weights=(0.8, 0.2), save_dir='_auto_split')
 
 
     mlc = 0  # int(np.concatenate(train_dataset.labels, 0)[:, 0].max())  # max label class
@@ -449,7 +441,7 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
     scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)  # plot_lr_scheduler(optimizer, scheduler, epochs)
 
 
-    nw = max(round(hyp['warmup_epochs'] * nb), 1000*8/batch_size)  # number of warmup iterations, max(3 epochs, 1k iterations)
+    nw = max(round(hyp['warmup_epochs'] * nb), 1000*64/batch_size)  # number of warmup iterations, max(3 epochs, 1k iterations)
     # nw = min(nw, (epochs - start_epoch) / 2 * nb)  # limit warmup to < 1/2 of training
     last_opt_step = -1
     maps = np.zeros(model.nc)  # mAP per class

@@ -329,6 +329,7 @@ def convert_statedict(weight, save_dir=''):
     model.load_state_dict(csd, strict=False)
     print(f'Transferred {len(csd)}/{len(model.state_dict())} items from {weight}')
     torch.save(model.state_dict(), save_dir, _use_new_zipfile_serialization=False)
+
 def draw_box(im, box, label, color=(0, 0, 255), txt_color=(255, 255, 255)):
     lw = max(round(sum(im.shape) / 2 * 0.001), 2)
     font_size = lw / 3

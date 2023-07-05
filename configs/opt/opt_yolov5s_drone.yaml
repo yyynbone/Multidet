@@ -1,4 +1,4 @@
-weights: results/train/drone/zjdet_neck/exp/weights/best.pt
+weights: checkpoints/zjs_v5s_pretrained.pt
 cfg: yolov5s.yaml
 
 data: drone.yaml
@@ -31,3 +31,4 @@ train_sample_portion: 0.8 # random select sample
 val_sample_portion: .2 # random select sample
 ignore_bkg: True
 find_unused_parameters: False
+val_first: True

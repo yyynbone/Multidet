@@ -86,79 +86,82 @@ def main(opt):
     else:
         weight_list.append(temp_weights)
 
-    for opt.weights in weight_list:
-        opt.device = select_device(opt.device, batch_size=opt.batch_size)
-        # Directories
-        if 'weights' in opt.weights.split('/'):
-            weight_file_name = '_'.join(opt.weights.split('/')[-4:-2]) + '_'
-        else:
-            weight_file_name = ''
-        weight_file_name += str(Path(opt.weights).stem)
+    all_save_dir = increment_path(Path(opt.project) / data_file  / opt.name,
+                                  exist_ok=opt.exist_ok)  # increment run
+    all_save_dir.mkdir(parents=True, exist_ok=True)  # make dir
+    opt.logger = set_logging(name=FILE.stem, filename=Path(Path(all_save_dir) / 'val.log'))
 
-        opt.save_dir = increment_path(Path(opt.project)/ data_file / weight_file_name / opt.name, exist_ok=opt.exist_ok)  # increment run
-        (opt.save_dir / 'labels' if opt.save_txt else opt.save_dir).mkdir(parents=True, exist_ok=True)  # make dir
-        opt.logger = set_logging(name=FILE.stem, filename=Path(Path(opt.save_dir) / 'val.log'))
+    print_args(FILE.stem, opt, logger=opt.logger)
+    stride = 32
+    task = opt.task if opt.task in ('train', 'val', 'test') else 'val'  # path to train/val/test images
+    if opt.val_train and task != 'train':
+        tasks = (task, 'train')
+    else:
+        tasks = (task,)
 
-        print_args(FILE.stem, opt, logger=opt.logger)
-        print_log(f'#############################################\nnow we val {opt.weights}:\n saved in {opt.save_dir}', opt.logger)
+    for opt.task in tasks:
+        data_pre = data_pres[opt.task]
+        task_data, data_pre = get_dataset(opt.data[opt.task], data_pre,  opt.imgsz, opt.logger,
+                                      stride=int(stride),
+                                      pad=.0,
+                                      prefix=f'{opt.task}: ',
+                                      bgr=opt.bgr,
+                                      filter_str=opt.filter_str,
+                                      filter_bkg=opt.ignore_bkg,
+                                      select_class=select_class_tuple(opt.data))
+        dataset = LoadImagesAndLabels(data_pre,
+                                      task_data,
+                                      batch_size=opt.batch_size,
+                                      logger=opt.logger,
+                                      bkg_ratio=getattr(opt, "bkg_ratio", 0),
+                                      obj_mask=getattr(opt,"val_obj_mask", 0),
+                                      sample_portion=getattr(opt, "val_sample_portion", 1),
+                                      pix_area=getattr(opt, 'pix_area', None),
+                                      cropped_imgsz=getattr(opt, "val_cropped_imgsz", False),
+                                      slide_crop=getattr(opt, "slide_crop", False)
+                                      )
 
-        # Load model
-        opt.model = attempt_load(opt.weights, map_location=opt.device, cfg=opt.cfg, nc=int(opt.data['nc']), logger=opt.logger)
-        opt.model = opt.model.module if hasattr(opt.model, 'module') else opt.model
-        # for p in opt.model.parameters():
-        #     p.requires_grad = False
-        stride = int(opt.model.stride.max()) if hasattr(opt.model, 'stride') else 32
-        opt.model.stride = stride
-        opt.model.names = opt.data['names']  # get class names
-        # if  not hasattr(opt.model, 'device'):
-        opt.model.device = opt.device
-        opt.model.train_val_filter = opt.train_val_filter
-        # stride = 32  # grid size (max stride)
-        # opt.imgsz = check_img_size(opt.imgsz, s=stride, logger=opt.logger)  # check image size
+        batch_size = min(opt.batch_size, len(dataset))
+        opt.dataloader = SuffleLoader(dataset,
+                      batch_size=batch_size,
+                      shuffle=False,
+                      num_workers=4,
+                      sampler=None,
+                      pin_memory=True,
+                      collate_fn=LoadImagesAndLabels.collate_fn)
+        opt.dataloader.shuffle_index()
 
-        if opt.compute_loss is not None:
-            if isinstance(opt.compute_loss, str):
-                opt.compute_loss = eval(opt.compute_loss)(opt.model, logger=opt.logger)
+        for opt.weights in weight_list:
+            opt.device = select_device(opt.device, batch_size=opt.batch_size)
+            # Directories
+            if 'weights' in opt.weights.split('/'):
+                weight_file_name = '_'.join(opt.weights.split('/')[-4:-2]) + '_'
+            else:
+                weight_file_name = ''
+            weight_file_name += str(Path(opt.weights).stem)
 
+            opt.save_dir = Path(all_save_dir) / weight_file_name  # increment run
+            (opt.save_dir / 'labels' if opt.save_txt else opt.save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
-        task = opt.task if opt.task in ('train', 'val', 'test') else 'val'  # path to train/val/test images
-        if opt.val_train and task != 'train':
-            tasks = (task, 'train')
-        else:
-            tasks = (task,)
+            print_log(f'#############################################\nnow we val {opt.weights}:\n saved in {opt.save_dir}', opt.logger)
 
-        for opt.task in tasks:
+            # Load model
+            opt.model = attempt_load(opt.weights, map_location=opt.device, cfg=opt.cfg, nc=int(opt.data['nc']), logger=opt.logger)
+            opt.model = opt.model.module if hasattr(opt.model, 'module') else opt.model
+            # for p in opt.model.parameters():
+            #     p.requires_grad = False
+            stride = int(opt.model.stride.max()) if hasattr(opt.model, 'stride') else 32
+            opt.model.stride = stride
+            opt.model.names = opt.data['names']  # get class names
+            # if  not hasattr(opt.model, 'device'):
+            opt.model.device = opt.device
+            opt.model.train_val_filter = opt.train_val_filter
+            # stride = 32  # grid size (max stride)
+            # opt.imgsz = check_img_size(opt.imgsz, s=stride, logger=opt.logger)  # check image size
 
-            data_pre = data_pres[opt.task]
-            task_data, data_pre = get_dataset(opt.data[opt.task], data_pre,  opt.imgsz, opt.logger,
-                                          stride=int(stride),
-                                          pad=.0,
-                                          prefix=f'{opt.task}: ',
-                                          bgr=opt.bgr,
-                                          filter_str=opt.filter_str,
-                                          filter_bkg=opt.ignore_bkg,
-                                          select_class=select_class_tuple(opt.data))
-            dataset = LoadImagesAndLabels(data_pre,
-                                          task_data,
-                                          batch_size=opt.batch_size,
-                                          logger=opt.logger,
-                                          bkg_ratio=getattr(opt, "bkg_ratio", 0),
-                                          obj_mask=getattr(opt,"val_obj_mask", 0),
-                                          sample_portion=getattr(opt, "val_sample_portion", 1),
-                                          pix_area=getattr(opt, 'pix_area', None),
-                                          cropped_imgsz=getattr(opt, "val_cropped_imgsz", False),
-                                          slide_crop=getattr(opt, "slide_crop", False)
-                                          )
-
-            batch_size = min(opt.batch_size, len(dataset))
-            opt.dataloader = SuffleLoader(dataset,
-                          batch_size=batch_size,
-                          shuffle=False,
-                          num_workers=4,
-                          sampler=None,
-                          pin_memory=True,
-                          collate_fn=LoadImagesAndLabels.collate_fn)
-            opt.dataloader.shuffle_index()
+            if opt.compute_loss is not None:
+                if isinstance(opt.compute_loss, str):
+                    opt.compute_loss = eval(opt.compute_loss)(opt.model, logger=opt.logger)
 
             # run normally
 
@@ -170,20 +173,12 @@ def main(opt):
                 p=results[0], r=results[1], map50=results[2], map=results[3],
                 t_inf=times[1], t_nms=times[2])
             print_log(msg, opt.logger)
+
     print_log('validate done', opt.logger)
 
     torch.cuda.empty_cache()
 
-def select():
-    import random
-    import shutil
-    from tqdm import tqdm
-    images = '/home/workspace/data/visdrone/images/slide_crop_480_360'
-    save = '/home/workspace/data/visdrone/images/select_slide_crop_480_360'
-    Path(save).mkdir()
-    for p in tqdm(os.listdir(images)):
-        if random.randint(1,1000)<20:
-            shutil.copy(Path(images)/p, Path(save)/p)
+
 if __name__ == "__main__":
     opt = parse_opt()
     main(opt)

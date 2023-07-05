@@ -1,0 +1,23 @@
+weights:
+  - checkpoints/zjs_v5s_pretrained.pt
+  - results/train/drone/yolov5s/exp/weights/best.pt
+  - results/train/drone/zjdet_bocat/exp/weights/best.pt
+  - results/train/drone/zjdet_v8s/exp/weights/best.pt
+  - results/train/drone/zjdet_neck/exp/weights/best.pt
+data: drone.yaml
+batch_size: 64 # for 640*640 64
+bgr: 1
+last_conf: [0.3]
+verbose: True
+visual_matched: False
+save_txt: True
+save_conf: True
+imgsz:
+- 540
+- 960
+div_area:
+- 5
+- 10
+- 15
+ignore_bkg: True
+val_sample_portion: .2 # random select sample

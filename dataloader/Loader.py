@@ -8,6 +8,7 @@ import math
 from copy import deepcopy
 from torch.utils.data import Dataset, DataLoader, distributed
 from tqdm import tqdm
+from glob import glob
 from pathlib import Path
 import shutil
 
@@ -16,8 +17,7 @@ from dataloader.load import select_image, select_video, load_results, load_label
 
 from dataloader.transform import Transfrom, gray
 from dataloader.augmentations import mask_label
-from utils import print_log, xyxy2xywh, torch_distributed_zero_first
-
+from utils import print_log, xyxy2xywh, torch_distributed_zero_first, mkdir
 
 class InfiniteDataLoader(DataLoader):
     """ Dataloader that reuses workers
@@ -82,8 +82,6 @@ class SuffleLoader(DataLoader):
             # self.batch_size = min(self.batch_size, len(self.dataset))  # ValueError: batch_size attribute should not be set after SuffleLoader is initialized
             # self.batch_sampler.__init__()
 
-
-
 class SuffleDist_Sample(distributed.DistributedSampler):
     def __init__(self, dataset, shuffle=False, **kargs):
         super().__init__(dataset, shuffle=shuffle, **kargs)
@@ -128,7 +126,55 @@ class SuffleDist_Sample(distributed.DistributedSampler):
 
         return iter(indices)
 
+def train_val_split(all_dataset, split_weights=(0.8, 0.2), seed=0, save_dir=None, save_image=False):
+    is_string = True
+    if isinstance(all_dataset, str):
+        # all_dataset = tqdm(os.listdir(all_dataset))
+        all_dataset = select_image(all_dataset)
+    else:
+        if isinstance(all_dataset[0], dict):
+            is_string = False
+        else:
+            print('wrong dataset format, must str or list[dict] ', all_dataset[0])
+            exit()
+    t_v_dataset = [[] for _ in range(len(split_weights))]
+    n = len(all_dataset)  # number of files
+    random.seed(seed)  # for reproducibility
+    indices = random.choices([0, 1], weights=split_weights, k=n)
+    for i, f in zip(indices, all_dataset):
+        t_v_dataset[i].append(f)
+    if save_dir is not None:
+        save_dn = ['autosplit_train', 'autosplit_val', 'autosplit_test'] if len(split_weights)>1 else ['select']
+        save_dir = str(Path((all_dataset[0] if  is_string else all_dataset[0]['filename'])).parent) + save_dir
+        mkdir(save_dir)
+        [(Path(save_dir) / f'{x}.txt').unlink(missing_ok=True) for x in save_dn]  # remove existing
+        for i, t_v in enumerate(t_v_dataset):
+            save_d = save_dn[i]
+            if save_image:
+                save_dir_d = os.path.join(save_dir, save_d)
+                mkdir(save_dir_d)
+            with open((Path(save_dir) / f'{save_d}.txt'), 'a') as f:
+                for p in t_v:
+                    if not is_string:
+                        p_n = p['filename']
+                    else:
+                        p_n = p
+                    f.write(p_n + '\n')  # add image to txt file
+                    if save_image:
+                        shutil.copy(p_n, Path(save_dir_d) / Path(p_n).name)
+            print('save to', Path(save_dir) / f'{save_d}.txt')
+    return t_v_dataset
 
+def select():
+    import random
+    import shutil
+    from tqdm import tqdm
+    images = '/home/workspace/data/visdrone/images/slide_crop_480_360'
+    save_dir = '/home/workspace/data/visdrone/images/select_slide_crop_480_360'
+    Path(save_dir).mkdir()
+    for p in tqdm(os.listdir(images)):
+        if random.randint(1,1000)<20:
+            shutil.copy(Path(images)/p, Path(save_dir)/p)
 
 def get_dataset(path, pre_process, img_size=640, logger=None, image_weights=False,
             single_cls=False, stride=32, pad=0.0, prefix='', bgr=True, filter_str='', select_class=(),origin_sample=1.,
@@ -533,8 +579,6 @@ class LoadImages(LoadImagesAndLabels):
             img = torch.from_numpy(img[None]).to(device).float()
             img /= 255  # 0 - 255 to 0.0 - 1.0
         return pred, img
-
-
 
 class LoadStreams:
     # streamloader, i.e. `python detect.py --source 'rtsp://example.com/media.mp4'  # RTSP, RTMP, HTTP streams`

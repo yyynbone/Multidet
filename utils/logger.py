@@ -3,6 +3,29 @@ import numpy as np
 import pandas as pd
 import yaml
 import re
+class Filehandler(logging.FileHandler):
+
+    def emit(self, record):
+        """
+        Emit a record.
+
+        If the stream was not opened because 'delay' was specified in the
+        constructor, open it before calling the superclass's emit.
+        """
+        if self.stream is None:
+            self.stream = self._open()
+
+        try:
+            record.msg = clean_color(record.msg)
+            msg = self.format(record)
+            stream = self.stream
+            # issue 35046: merged two stream.writes into one.
+            stream.write(msg + self.terminator)
+            self.flush()
+        except RecursionError:  # See issue 36272
+            raise
+        except Exception:
+            self.handleError(record)
 
 # def set_logging(name=None, verbose=True, filename=None,rank=-1):
 #     # Sets level and returns logger
@@ -30,16 +53,17 @@ def set_logging(name=None, verbose=True, filename=None, rank=-1):
     # Sets level and returns logger
     # rank in world for Multi-GPU trainings
     # console_format = logging.Formatter('%(filename)s %(funcName)s [line:%(lineno)d]-%(levelname)s: %(message)s') # 日志格式
+    console_format = logging.Formatter('%(asctime)s-%(message)s')  # 日志格式
     log_format = logging.Formatter('%(message)s')  # 日志格式
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO if (verbose and rank in (-1, 0)) else logging.WARNING)
     logger.propagate = False #防止出现 parent 里的 basic_config的streamhandler被调用
     if rank in (-1, 0):
         console = logging.StreamHandler()
-        console.setFormatter(log_format)
+        console.setFormatter(console_format)
         logger.addHandler(console)
         if filename:
-            file_handler = logging.FileHandler(filename=filename, mode='a', encoding='utf-8')
+            file_handler = Filehandler(filename=filename, mode='a', encoding='utf-8')
             file_handler.setFormatter(log_format)
             logger.addHandler(file_handler)
     return logger
