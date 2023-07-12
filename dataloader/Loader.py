@@ -126,7 +126,7 @@ class SuffleDist_Sample(distributed.DistributedSampler):
 
         return iter(indices)
 
-def train_val_split(all_dataset, split_weights=(0.8, 0.2), seed=0, save_dir=None, save_image=False):
+def train_val_split(all_dataset, split_weights=(0.8, 0.2, 0), seed=0, save_dir=None, save_image=False):
     is_string = True
     if isinstance(all_dataset, str):
         # all_dataset = tqdm(os.listdir(all_dataset))
@@ -140,7 +140,7 @@ def train_val_split(all_dataset, split_weights=(0.8, 0.2), seed=0, save_dir=None
     t_v_dataset = [[] for _ in range(len(split_weights))]
     n = len(all_dataset)  # number of files
     random.seed(seed)  # for reproducibility
-    indices = random.choices([0, 1], weights=split_weights, k=n)
+    indices = random.choices([0, 1, 2], weights=split_weights, k=n)
     for i, f in zip(indices, all_dataset):
         t_v_dataset[i].append(f)
     if save_dir is not None:

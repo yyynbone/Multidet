@@ -1,11 +1,12 @@
 weights: results/train/drone/zjdet_unet/exp/weights/best.pt
 cfg: zjdet_unet.yaml
 
-data: drone_crop.yaml
+data: drone.yaml
 data_prefile: data_preprocess.yaml
 hyp: hyp_v8.yaml
 batch_size: 4 #128 # for 640*640 64
 bgr: 1
+conf_thresh: 0.1
 last_conf: 0.3
 verbose: True
 visual_matched: False
@@ -17,7 +18,7 @@ div_area:
 epochs: 500
 patience: 300
 rect: false
-world_size: 1
+world_size: 8
 loss: LossV8
 loss_supervision: 100
 
@@ -25,8 +26,8 @@ loss_supervision: 100
 resume: False
 
 imgsz:
-- 90
-- 120
+- 270
+- 480
 
 #imgsz:
 #- 88
@@ -35,7 +36,8 @@ imgsz:
 #val_cropped_imgsz: [180, 240]
 #slide_crop: False
 #crop_sample_portion: 0.1
-train_sample_portion: 1 # random select sample
+# origin_sample: 0.1
+train_sample_portion: 0.8 # random select sample
 val_sample_portion: .2 # random select sample
 ignore_bkg: True
 # pix_area : [2, 50]

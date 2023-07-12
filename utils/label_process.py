@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 def labels_to_class_weights(labels, nc=80, empty_bins=1e16):
     # Get class weights (inverse frequency) from training labels
@@ -207,3 +208,101 @@ def select_class_tuple(data_dict):
     se_id = [ data_class.index(sc) if sc in data_class else -1  for sc in select_class]
     print(f'now we select class {select_class}, id in origin is {se_id}')
     return tuple(se_id)
+
+#v8 mask
+
+def crop_mask(masks, boxes):
+    """
+    It takes a mask and a bounding box, and returns a mask that is cropped to the bounding box
+
+    Args:
+      masks (torch.Tensor): [h, w, n] tensor of masks
+      boxes (torch.Tensor): [n, 4] tensor of bbox coordinates in relative point form
+
+    Returns:
+      (torch.Tensor): The masks are being cropped to the bounding box.
+    """
+    n, h, w = masks.shape
+    x1, y1, x2, y2 = torch.chunk(boxes[:, :, None], 4, 1)  # x1 shape(1,1,n)
+    r = torch.arange(w, device=masks.device, dtype=x1.dtype)[None, None, :]  # rows shape(1,w,1)
+    c = torch.arange(h, device=masks.device, dtype=x1.dtype)[None, :, None]  # cols shape(h,1,1)
+
+    return masks * ((r >= x1) * (r < x2) * (c >= y1) * (c < y2))
+
+
+def process_mask_upsample(protos, masks_in, bboxes, shape):
+    """
+    It takes the output of the mask head, and applies the mask to the bounding boxes. This produces masks of higher
+    quality but is slower.
+
+    Args:
+      protos (torch.Tensor): [mask_dim, mask_h, mask_w]
+      masks_in (torch.Tensor): [n, mask_dim], n is number of masks after nms
+      bboxes (torch.Tensor): [n, 4], n is number of masks after nms
+      shape (tuple): the size of the input image (h,w)
+
+    Returns:
+      (torch.Tensor): The upsampled masks.
+    """
+    c, mh, mw = protos.shape  # CHW
+    masks = (masks_in @ protos.float().view(c, -1)).sigmoid().view(-1, mh, mw)
+    masks = F.interpolate(masks[None], shape, mode='bilinear', align_corners=False)[0]  # CHW
+    masks = crop_mask(masks, bboxes)  # CHW
+    return masks.gt_(0.5)
+
+
+def process_mask(protos, masks_in, bboxes, shape, upsample=False):
+    """
+    It takes the output of the mask head, and applies the mask to the bounding boxes. This is faster but produces
+    downsampled quality of mask
+
+    Args:
+      protos (torch.Tensor): [mask_dim, mask_h, mask_w]
+      masks_in (torch.Tensor): [n, mask_dim], n is number of masks after nms
+      bboxes (torch.Tensor): [n, 4], n is number of masks after nms
+      shape (tuple): the size of the input image (h,w)
+
+    Returns:
+      (torch.Tensor): The processed masks.
+    """
+
+    c, mh, mw = protos.shape  # CHW
+    ih, iw = shape
+    masks = (masks_in @ protos.float().view(c, -1)).sigmoid().view(-1, mh, mw)  # CHW
+
+    downsampled_bboxes = bboxes.clone()
+    downsampled_bboxes[:, 0] *= mw / iw
+    downsampled_bboxes[:, 2] *= mw / iw
+    downsampled_bboxes[:, 3] *= mh / ih
+    downsampled_bboxes[:, 1] *= mh / ih
+
+    masks = crop_mask(masks, downsampled_bboxes)  # CHW
+    if upsample:
+        masks = F.interpolate(masks[None], shape, mode='bilinear', align_corners=False)[0]  # CHW
+    return masks.gt_(0.5)
+
+
+def process_mask_native(protos, masks_in, bboxes, shape):
+    """
+    It takes the output of the mask head, and crops it after upsampling to the bounding boxes.
+
+    Args:
+      protos (torch.Tensor): [mask_dim, mask_h, mask_w]
+      masks_in (torch.Tensor): [n, mask_dim], n is number of masks after nms
+      bboxes (torch.Tensor): [n, 4], n is number of masks after nms
+      shape (tuple): the size of the input image (h,w)
+
+    Returns:
+      masks (torch.Tensor): The returned masks with dimensions [h, w, n]
+    """
+    c, mh, mw = protos.shape  # CHW
+    masks = (masks_in @ protos.float().view(c, -1)).sigmoid().view(-1, mh, mw)
+    gain = min(mh / shape[0], mw / shape[1])  # gain  = old / new
+    pad = (mw - shape[1] * gain) / 2, (mh - shape[0] * gain) / 2  # wh padding
+    top, left = int(pad[1]), int(pad[0])  # y, x
+    bottom, right = int(mh - pad[1]), int(mw - pad[0])
+    masks = masks[:, top:bottom, left:right]
+
+    masks = F.interpolate(masks[None], shape, mode='bilinear', align_corners=False)[0]  # CHW
+    masks = crop_mask(masks, bboxes)  # CHW
+    return masks.gt_(0.5)

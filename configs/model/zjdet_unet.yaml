@@ -2,9 +2,9 @@
 depth_multiple: 0.33  # model depth multiple
 width_multiple: 0.5  # layer channel multiple
 depth_layer: [C2f]
-width_layer: [Conv, C2f, MultiDecoder, MaskDetect]
-anchors:
-  - [2,3, 8,15, 32,61, 59,119]  # 5,4, 8,7, 14,12, 29,18 # 9,8, 21,12, 28,25, 61,40
+width_layer: [Conv, C2f, MultiDecoder, MaskDetect, PoolConv]
+#anchors:
+#  - [2,3, 8,15, 32,61, 59,119]  # 5,4, 8,7, 14,12, 29,18 # 9,8, 21,12, 28,25, 61,40
 
 # YOLOv8  backbone
 backbone:
@@ -23,21 +23,32 @@ backbone:
 # YOLOv8
 neck:
   [
-#   [-1, nn.Upsample, [None, 2, 'bilinear']],  #9
-#   [-1, Conv, [1024, 64,  3, 1]], #10
-#   [6, Conv, [512, 64,  3, 1]]
-#   [4, Poolconv, [256, 64, 2]]
-#   [2, Poolconv, [128, 64, 4]]
-#   [0, Poolconv, [64, 64, 8]]
-#   [[10, 11, 12, 13, 14], Mulcat, [1]],  # cat backbone P3
+   [-1, Conv, [1024, 128,  3, 1]], #9
+   [-1, nn.Upsample, [None, 16, 'bilinear']],  #10
+   [-1, Conv, [128, 64,  3, 1]], #11
 
-   [[-1, 6, 4, 2, 0], MultiDecoder, [[1024, 512, 256, 128, 64], 16, 4,  'bilinear']],
+   [6, Conv, [512, 128,  3, 1]],
+   [-1, nn.Upsample, [None, 8, 'bilinear']],
+   [-1, Conv, [128, 64,  3, 1]],  #14
+
+   [4, Conv, [256, 128,  3, 1]],
+   [-1, nn.Upsample, [None, 4, 'bilinear']],
+   [-1, Conv, [128, 64,  3, 1]],  #17
+
+   [2, Conv, [128, 128,  3, 1]],
+   [-1, nn.Upsample, [None, 2, 'bilinear']],
+   [-1, Conv, [128, 64,  3, 1]],  #20
+
+   [0, Conv, [64, 64,  3, 1]], #21
+   [[11, 14, 17, 20, -1], Mulcat, [1]],  # cat backbone P3
+
+   # [[-1, 6, 4, 2, 0], MultiDecoder, [[1024, 512, 256, 128, 64], 16, 4,  'bilinear']],
    # [-1, Conv, [80, 64,  3, 1]],
   ]
 head:
   [
    # [[10], Detect, [[320], nc, anchors]],#
-    [[9], MaskDetect, [[80], nc]],#
+    [[-1], MaskDetect, [[320], nc]],#
   ]
 # from               n    params  module                                  arguments
 #  0                -1       464  models.layers.common_layer.Conv         [3, 16, 3, 1]

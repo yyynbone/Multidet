@@ -82,7 +82,7 @@ class TaskAlignedAssigner(nn.Module):
             return (torch.full_like(pd_scores[..., 0], self.bg_idx).to(device), torch.zeros_like(pd_bboxes).to(device),
                     torch.zeros_like(pd_scores).to(device), torch.zeros_like(pd_scores[..., 0]).to(device),
                     torch.zeros_like(pd_scores[..., 0]).to(device))
-
+        # print("allo, reserved", torch.cuda.memory_allocated() / 1E9, torch.cuda.memory_reserved() / 1E9)
         mask_pos, align_metric, overlaps = self.get_pos_mask(pd_scores, pd_bboxes, gt_labels, gt_bboxes, anc_points,
                                                              mask_gt)
 
@@ -102,12 +102,17 @@ class TaskAlignedAssigner(nn.Module):
 
     def get_pos_mask(self, pd_scores, pd_bboxes, gt_labels, gt_bboxes, anc_points, mask_gt):
         # get anchor_align metric, (b, max_num_obj, h*w)
-        align_metric, overlaps = self.get_box_metrics(pd_scores, pd_bboxes, gt_labels, gt_bboxes)
+
+        align_metric, overlaps = self.get_box_metrics(pd_scores, pd_bboxes, gt_labels, gt_bboxes)  #(bs, gt_n, pred_num=feature_map_y*x)
+
         # get in_gts mask, (b, max_num_obj, h*w)
         mask_in_gts = select_candidates_in_gts(anc_points, gt_bboxes)
+        # print("allo, reserved select_candidates_in_gts", torch.cuda.memory_allocated() / 1E9, torch.cuda.memory_reserved() / 1E9)
         # get topk_metric mask, (b, max_num_obj, h*w)
         mask_topk = self.select_topk_candidates(align_metric * mask_in_gts,
                                                 topk_mask=mask_gt.repeat([1, 1, self.topk]).bool())
+        # print("allo, reserved select_topk_candidates", torch.cuda.memory_allocated() / 1E9,
+        #       torch.cuda.memory_reserved() / 1E9)
         # merge all mask to a final mask, (b, max_num_obj, h*w)
         mask_pos = mask_topk * mask_in_gts * mask_gt
 
@@ -140,7 +145,16 @@ class TaskAlignedAssigner(nn.Module):
         # (b, max_num_obj, topk)
         topk_idxs = torch.where(topk_mask, topk_idxs, 0)
         # (b, max_num_obj, topk, h*w) -> (b, max_num_obj, h*w)
-        is_in_topk = F.one_hot(topk_idxs, num_anchors).sum(-2)
+        # print("allo, reserved", torch.cuda.memory_allocated() / 1E9, torch.cuda.memory_reserved() / 1E9) #2.25G, 4.97G
+        torch.cuda.empty_cache()
+        # print("allo, reserved after empty_cache", torch.cuda.memory_allocated() / 1E9, torch.cuda.memory_reserved() / 1E9)  # 2.25G, 4.97G
+        is_in_topk = F.one_hot(topk_idxs, num_anchors).sum(-2)  # 可见此处，显著增加了torch.cuda.memory_reserved()
+        # import sys
+        # print(torch.cuda.memory_stats())  #OrderedDict([('active.all.allocated', 36939), ('active.all.current', 773),...])
+        # print("allo, reserved is_in_topk", torch.cuda.memory_allocated() / 1E9, torch.cuda.memory_reserved() / 1E9, sys.getsizeof(is_in_topk.storage())/1E9)  #2.54G, 7.87G, 0.29G
+        torch.cuda.empty_cache()
+        # print("allo, reserved after empty_cache", torch.cuda.memory_allocated() / 1E9,
+        #       torch.cuda.memory_reserved() / 1E9)  # 2.25G, 4.97G
         # filter invalid bboxes
         is_in_topk = torch.where(is_in_topk > 1, 0, is_in_topk)
         return is_in_topk.to(metrics.dtype)
@@ -165,6 +179,7 @@ class TaskAlignedAssigner(nn.Module):
         # assigned target scores
         target_labels.clamp(0)
         target_scores = F.one_hot(target_labels, self.num_classes)  # (b, h*w, 80)
+        torch.cuda.empty_cache()
         fg_scores_mask = fg_mask[:, :, None].repeat(1, 1, self.num_classes)  # (b, h*w, 80)
         target_scores = torch.where(fg_scores_mask > 0, target_scores, 0)
 

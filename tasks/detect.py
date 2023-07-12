@@ -264,18 +264,20 @@ def run(weights='checkpoints/zjs_s16.pt',  # model.pt path(s)
 
 def parse_opt():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default= 'results/train/drone/zjdet_v8/exp/weights/best.pt', help='model path(s)')
+    parser.add_argument('--weights', type=str, default= 'checkpoints/zjs_v5s_pretrained.pt', help='model path(s)')
+    # results/train/drone/zjdet_v8s_afree/exp2/weights/best.pt
+    # results/train/drone/zjdet_v8/exp/weights/best.pt
     # results/train/drone/zjdet_neck/exp/weights/best.pt
     # checkpoints/zjs_v5s_pretrained.pt
     # results/train/drone/yolov5s/exp/weights/best.pt
     parser.add_argument('--cfg', default=None, help='model yaml path(s)')
-    # parser.add_argument('--source', type=str, default= '../data/visdrone/video.mp4', help='file/dir/URL/glob, 0 for webcam')
-    parser.add_argument('--source', type=str, default='../data/visdrone/images/train/9999938_00000_d_0000436.jpg',
-                        help='file/dir/URL/glob, 0 for webcam')
+    parser.add_argument('--source', type=str, default= '../data/visdrone/video.mp4', help='file/dir/URL/glob, 0 for webcam')
+    # parser.add_argument('--source', type=str, default='../data/visdrone/images/train/9999938_00000_d_0000435.jpg',
+    #                     help='file/dir/URL/glob, 0 for webcam')
     # parser.add_argument('--resize', default=[544, 960], help='slide crop a big picture or not')
     # parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[544, 960],
     #                     help='inference size h,w')
-    parser.add_argument('--crop-imgsz', default=[540, 960], help='slide crop a big picture or not')
+    # parser.add_argument('--crop-imgsz', default=[540, 960], help='slide crop a big picture or not')
     parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[540, 960],
                         help='inference size h,w')
     parser.add_argument('--conf-thres', type=float, default=0.25, help='confidence threshold')

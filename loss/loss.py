@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from utils import bbox_iou,  is_parallel, nancheck, infcheck, smooth_BCE, build_targets, TaskAlignedAssigner, dist2bbox, make_anchors, bbox2dist, xywh2xyxy, print_log
+from utils import bbox_iou,  is_parallel, nancheck, infcheck, smooth_BCE, build_targets, TaskAlignedAssigner, \
+    dist2bbox, make_anchors, bbox2dist, xywh2xyxy, print_log, xyxy2xywh, crop_mask
 from loss.basic_loss import FocalLoss, CrossEntropyLoss
 
 # class LossV5:
@@ -129,6 +130,7 @@ class LossV5:
         self.sort_obj_iou = False
         device = next(model.parameters()).device  # get model device
         h = model.hyp  # hyperparameters
+        autobalance = h.get('autobalance', False)
 
         # Define criteria
         # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>  modify
@@ -223,8 +225,12 @@ class LossV5:
 
 
                 obj_ls = self.BCEobj(pi[..., 4], tobj)
-                if obj_ls > 2:
+                if obj_ls > 0.5:
                     print_log(f"now in level {i} object loss bigger, which may cause erupt", self.logger)
+                #     self.obj_balance[i]*=2
+                # else:
+                #     self.obj_balance[i]=[4.0, 1.0, 0.4][i]
+
                 if nancheck([cls_ls, iou_ls, obj_ls]) or infcheck([cls_ls, iou_ls, obj_ls]):
                     print_log(f"warning now in level {i},  we found a nan or inf in loss {[cls_ls, iou_ls, obj_ls]}", self.logger)
 
@@ -281,6 +287,7 @@ class BboxLoss(nn.Module):
         wr = 1 - wl  # weight right
         return (F.cross_entropy(pred_dist, tl.view(-1), reduction="none").view(tl.shape) * wl +
                 F.cross_entropy(pred_dist, tr.view(-1), reduction="none").view(tl.shape) * wr).mean(-1, keepdim=True)
+
 
 # Criterion class for computing training losses
 class LossV8:
@@ -376,6 +383,137 @@ class LossV8:
 
         return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
 
+# Criterion class for computing training losses
+class LossV8seg:
+
+    def __init__(self, model, logger=None, overlap=True):  # model must be de-paralleled
+
+        device = next(model.parameters()).device  # get model device
+        h = model.hyp  # hyperparameters
+
+        m = model.module.model[model.module.det_head_idx] if is_parallel(model) else model.model[
+            model.det_head_idx]  # Detect() module
+        self.bce = nn.BCEWithLogitsLoss(reduction='none')
+        self.hyp = h
+        self.stride = m.stride  # model strides
+        self.nc = m.nc  # number of classes
+        self.no = m.no
+        self.reg_max = m.reg_max
+        self.device = device
+
+        self.use_dfl = m.reg_max > 1
+        self.assigner = TaskAlignedAssigner(topk=10, num_classes=self.nc, alpha=0.5, beta=6.0)
+        self.bbox_loss = BboxLoss(m.reg_max - 1, use_dfl=self.use_dfl).to(device)
+        self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)
+
+        self.loss_num = 4
+        self.nm = model.model[-1].nm  # number of masks
+        self.overlap = overlap
+
+    def preprocess(self, targets, batch_size, scale_tensor):
+        if targets.shape[0] == 0:
+            out = torch.zeros(batch_size, 0, 5, device=self.device)
+        else:
+            i = targets[:, 0]  # image index
+            _, counts = i.unique(return_counts=True)
+            out = torch.zeros(batch_size, counts.max(), 5, device=self.device)
+            for j in range(batch_size):
+                matches = i == j
+                n = matches.sum()
+                if n:
+                    out[j, :n] = targets[matches, 1:]
+            out[..., 1:5] = xywh2xyxy(out[..., 1:5].mul_(scale_tensor))
+        return out
+
+    def bbox_decode(self, anchor_points, pred_dist):
+        if self.use_dfl:
+            b, a, c = pred_dist.shape  # batch, anchors, channels
+            pred_dist = pred_dist.view(b, a, 4, c // 4).softmax(3).matmul(self.proj.type(pred_dist.dtype))
+            # pred_dist = pred_dist.view(b, a, c // 4, 4).transpose(2,3).softmax(3).matmul(self.proj.type(pred_dist.dtype))
+            # pred_dist = (pred_dist.view(b, a, c // 4, 4).softmax(2) * self.proj.type(pred_dist.dtype).view(1, 1, -1, 1)).sum(2)
+        return dist2bbox(pred_dist, anchor_points, xywh=False)
+
+    def __call__(self, preds, targets):
+        if isinstance(targets, (list, tuple)):
+            class_label, targets, seg_img = targets
+        loss = torch.zeros(self.loss_num, device=self.device)  # box, cls, dfl
+        if self.loss_num==3:
+            feats = preds[1] if isinstance(preds, tuple) else preds
+            pred_masks, proto =  None, None
+        else:
+            feats, pred_masks, proto = preds if len(preds) == 3 else preds[1]
+
+        pred_distri, pred_scores = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2).split(
+            (self.reg_max * 4, self.nc), 1)
+
+        pred_scores = pred_scores.permute(0, 2, 1).contiguous()
+        pred_distri = pred_distri.permute(0, 2, 1).contiguous()
+
+        if pred_masks is not None:
+            pred_masks = pred_masks.permute(0, 2, 1).contiguous()
+            masks = seg_img.to(self.device).float()
+            batch_size, _, mask_h, mask_w = proto.shape  # batch size, number of masks, mask height, mask width
+            if tuple(masks.shape[-2:]) != (mask_h, mask_w):  # downsample
+                masks = F.interpolate(masks[None], (mask_h, mask_w), mode="nearest")[0]
+
+        dtype = pred_scores.dtype
+        batch_size = pred_scores.shape[0]
+        imgsz = torch.tensor(feats[0].shape[2:], device=self.device, dtype=dtype) * self.stride[0]  # image size (h,w)
+        anchor_points, stride_tensor = make_anchors(feats, self.stride, 0.5)
+
+        # targets
+        # targets = torch.cat((batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1)
+        targets = self.preprocess(targets.to(self.device), batch_size, scale_tensor=imgsz[[1, 0, 1, 0]])
+        gt_labels, gt_bboxes = targets.split((1, 4), 2)  # cls, xyxy
+        mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0)
+
+        # pboxes
+        pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # xyxy, (b, h*w, 4)
+
+        _, target_bboxes, target_scores, fg_mask, target_gt_idx = self.assigner(
+            pred_scores.detach().sigmoid(), (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
+            anchor_points * stride_tensor, gt_labels, gt_bboxes, mask_gt)
+
+        target_bboxes /= stride_tensor
+        target_scores_sum = max(target_scores.sum(), 1)
+
+        # cls loss
+        # loss[1] = self.varifocal_loss(pred_scores, target_scores, target_labels) / target_scores_sum  # VFL way
+        loss[1] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum  # BCE
+
+        # bbox loss
+        if fg_mask.sum():
+            loss[0], loss[2] = self.bbox_loss(pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores,
+                                              target_scores_sum, fg_mask)
+            if pred_masks is not None:
+                for i in range(batch_size):
+                    if fg_mask[i].sum():
+                        mask_idx = target_gt_idx[i][fg_mask[i]]
+                        if self.overlap:
+                            gt_mask = torch.where(masks[[i]] == (mask_idx + 1).view(-1, 1, 1), 1.0, 0.0)
+                        else:
+                            gt_mask = masks[i][mask_idx]
+                        xyxyn = target_bboxes[i][fg_mask[i]] / imgsz[[1, 0, 1, 0]]
+                        marea = xyxy2xywh(xyxyn)[:, 2:].prod(1)
+                        mxyxy = xyxyn * torch.tensor([mask_w, mask_h, mask_w, mask_h], device=self.device)
+                        loss[3] += self.single_mask_loss(gt_mask, pred_masks[i][fg_mask[i]], proto[i], mxyxy,
+                                                         marea)  # seg loss
+
+        loss[0] *= self.hyp['box']  # box gain
+        loss[1] *= self.hyp['cls']  # cls gain
+        loss[2] *= self.hyp['dfl']  # dfl gain
+
+        if pred_masks is not None:
+            loss[3] *= self.hyp.box / batch_size  # seg gain
+
+        return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
+    
+    def single_mask_loss(self, gt_mask, pred, proto, xyxy, area):
+        # Mask loss for one image
+        pred_mask = (pred @ proto.view(self.nm, -1)).view(-1, *proto.shape[1:])  # (n, 32) @ (32,80,80) -> (n,80,80)
+        loss = F.binary_cross_entropy_with_logits(pred_mask, gt_mask, reduction="none")
+        return (crop_mask(loss, xyxy).mean(dim=(1, 2)) / area).mean()
+    
 class ClassifyLoss():
     def __init__(self,model, logger=None):
         use_BCE = model.hyp.get('use_BCE', True)

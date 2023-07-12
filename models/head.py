@@ -397,16 +397,16 @@ class YOLOv8Segment(Detect):
         self.nm = nm  # number of masks
         self.npr = npr  # number of protos
         self.proto = Proto(ch[0], self.npr, self.nm)  # protos
-        self.detect = Detect.forward
+        self.detect = YOLOv8Detect.forward
 
         c4 = max(ch[0] // 4, self.nm)
         self.cv4 = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.nm, 1)) for x in ch)
 
     def forward(self, x):
-        p = self.proto(x[0])  # mask protos
+        p = self.proto(x[0])  # mask protos, 针对最小stride 的featuremap，进行一次上采样， 制作mask protos,
         bs = p.shape[0]  # batch size
 
-        mc = torch.cat([self.cv4[i](x[i]).view(bs, self.nm, -1) for i in range(self.nl)], 2)  # mask coefficients
+        mc = torch.cat([self.cv4[i](x[i]).view(bs, self.nm, -1) for i in range(self.nl)], 2)  # mask coefficients   (bs, 32, 80*80+40*40+20*20)
         x = self.detect(self, x)
         if self.training:
             return x, mc, p
@@ -466,11 +466,11 @@ class MaskDetect(nn.Module):
     anchors = torch.empty(0)  # init
     strides = torch.empty(0)  # init
 
-    def __init__(self, ch=(), nc=80):  # detection layer
+    def __init__(self, ch=(), nc=80, reg_max=16):  # detection layer
         super().__init__()
         self.nc = nc  # number of classes
         self.nl = len(ch)  # number of detection layers
-        self.reg_max = 16  # DFL channels (ch[0] // 16 to scale 4/8/12/16/20 for n/s/m/l/x)
+        self.reg_max = reg_max # DFL channels (ch[0] // 16 to scale 4/8/12/16/20 for n/s/m/l/x)
         self.no = nc + self.reg_max * 4  # number of outputs per anchor
         self.stride = torch.zeros(self.nl)  # strides computed during build
 
@@ -497,6 +497,102 @@ class MaskDetect(nn.Module):
         objc = torch.ones_like(dbox[:, :1, :])
         y = torch.cat((dbox, objc, cls.sigmoid()), 1).transpose(1, 2)   # (bs, -1, 85)
         return y if self.export else (y, x)
+
+    def test(self, x):
+        shape = x[0].shape  # BCHW
+        if self.dynamic or self.shape != shape:
+            self.anchors, self.strides = (x.transpose(0, 1) for x in make_anchors(x, self.stride, 0.5))
+            self.shape = shape
+
+        box, cls = torch.cat([xi.view(shape[0], self.no, -1) for xi in x], 2).split((self.reg_max * 4, self.nc), 1)
+        dbox = dist2bbox(self.dfl(box), self.anchors.unsqueeze(0), xywh=True, dim=1) * self.strides
+
+        # modify for zjdet detect
+        # y = torch.cat((dbox, cls.sigmoid()), 1)
+        objc = torch.ones_like(dbox[:, :1, :])
+        y = torch.cat((dbox, objc, cls.sigmoid()), 1).transpose(1, 2)  # (bs, -1, 85)
+        return y
+
+    def get_logit(self, x):
+        shape = x[0].shape  # BCHW
+        box, cls = torch.cat([xi.view(shape[0], self.no, -1) for xi in x], 2).split((self.reg_max * 4, self.nc), 1)
+        cls = cls.transpose(1, 2)
+        conf = cls.max(dim=-1, keepdim=True)[0]
+        logits_ = torch.cat((conf, cls), -1)
+        return logits_
+
+    def bias_init(self):
+        # Initialize Detect() biases, WARNING: requires stride availability
+        m = self  # self.model[-1]  # Detect() module
+        # cf = torch.bincount(torch.tensor(np.concatenate(dataset.labels, 0)[:, 0]).long(), minlength=nc) + 1
+        # ncf = math.log(0.6 / (m.nc - 0.999999)) if cf is None else torch.log(cf / cf.sum())  # nominal class frequency
+        for a, b, s in zip(m.cv2, m.cv3, m.stride):  # from
+            a[-1].bias.data[:] = 1.0  # box
+            b[-1].bias.data[:m.nc] = math.log(5 / m.nc / (640 / s) ** 2)  # cls (.01 objects, 80 classes, 640 img)
+
+
+class AnchorFreeDetect(nn.Module):
+    # YOLOv8 Detect head for detection models
+    dynamic = False  # force grid reconstruction
+    export = False  # export mode
+    shape = None
+    anchors = torch.empty(0)  # init
+    strides = torch.empty(0)  # init
+
+    def __init__(self, ch=(), nc=80, reg_max=16):  # detection layer
+        super().__init__()
+        self.nc = nc  # number of classes
+        self.nl = len(ch)  # number of detection layers
+        self.reg_max = reg_max # DFL channels (ch[0] // 16 to scale 4/8/12/16/20 for n/s/m/l/x)
+        self.no = nc + self.reg_max * 4  # number of outputs per anchor
+        self.stride = torch.zeros(self.nl)  # strides computed during build
+
+
+        self.cv2 = nn.ModuleList(nn.Sequential(nn.Conv2d(x, 4 * self.reg_max, 1)) for x in ch)
+        self.cv3 = nn.ModuleList(nn.Sequential(nn.Conv2d(x, self.nc, 1)) for x in ch)
+        self.dfl = DFL(self.reg_max) if self.reg_max > 1 else nn.Identity()
+
+    def forward(self, x):
+        shape = x[0].shape  # BCHW
+        for i in range(self.nl):
+            x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1)  # (bs, 16, y, x) + (bs, nc, y, x)
+        if self.training:
+            return x
+        elif self.dynamic or self.shape != shape:
+            self.anchors, self.strides = (x.transpose(0, 1) for x in make_anchors(x, self.stride, 0.5))
+            self.shape = shape
+
+        box, cls = torch.cat([xi.view(shape[0], self.no, -1) for xi in x], 2).split((self.reg_max * 4, self.nc), 1)
+        dbox = dist2bbox(self.dfl(box), self.anchors.unsqueeze(0), xywh=True, dim=1) * self.strides
+
+        # modify for zjdet detect
+        # y = torch.cat((dbox, cls.sigmoid()), 1)
+        objc = torch.ones_like(dbox[:, :1, :])
+        y = torch.cat((dbox, objc, cls.sigmoid()), 1).transpose(1, 2)   # (bs, -1, 85)
+        return y if self.export else (y, x)
+
+    def test(self, x):
+        shape = x[0].shape  # BCHW
+        if self.dynamic or self.shape != shape:
+            self.anchors, self.strides = (x.transpose(0, 1) for x in make_anchors(x, self.stride, 0.5))
+            self.shape = shape
+
+        box, cls = torch.cat([xi.view(shape[0], self.no, -1) for xi in x], 2).split((self.reg_max * 4, self.nc), 1)
+        dbox = dist2bbox(self.dfl(box), self.anchors.unsqueeze(0), xywh=True, dim=1) * self.strides
+
+        # modify for zjdet detect
+        # y = torch.cat((dbox, cls.sigmoid()), 1)
+        objc = torch.ones_like(dbox[:, :1, :])
+        y = torch.cat((dbox, objc, cls.sigmoid()), 1).transpose(1, 2)  # (bs, -1, 85)
+        return y
+
+    def get_logit(self, x):
+        shape = x[0].shape  # BCHW
+        box, cls = torch.cat([xi.view(shape[0], self.no, -1) for xi in x], 2).split((self.reg_max * 4, self.nc), 1)
+        cls = cls.transpose(1, 2)
+        conf = cls.max(dim=-1, keepdim=True)[0]
+        logits_ = torch.cat((conf, cls), -1)
+        return logits_
 
     def bias_init(self):
         # Initialize Detect() biases, WARNING: requires stride availability

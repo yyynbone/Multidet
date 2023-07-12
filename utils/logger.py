@@ -53,7 +53,7 @@ def set_logging(name=None, verbose=True, filename=None, rank=-1):
     # Sets level and returns logger
     # rank in world for Multi-GPU trainings
     # console_format = logging.Formatter('%(filename)s %(funcName)s [line:%(lineno)d]-%(levelname)s: %(message)s') # 日志格式
-    console_format = logging.Formatter('%(asctime)s-%(message)s')  # 日志格式
+    console_format = logging.Formatter('%(message)s')  # 日志格式
     log_format = logging.Formatter('%(message)s')  # 日志格式
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO if (verbose and rank in (-1, 0)) else logging.WARNING)

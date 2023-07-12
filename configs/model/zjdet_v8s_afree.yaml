@@ -1,15 +1,9 @@
 # Parameters
-depth_multiple: 0.33  # model depth multiple
+depth_multiple: 1.  # model depth multiple
 width_multiple: 0.5  # layer channel multiple
 depth_layer: [C2f]
-width_layer: [Conv, C2f, SPPF, Detect]
-anchors:
-#  - [8,15, 18,30, 25,15]  # P3/8
-#  - [32,61, 62,45, 59,119]  # P4/16
-#  - [116,90, 156,198, 373,326]  # P5/32
-  - [10,13, 16,30, 33,23]  # P3/8
-  - [30,61, 62,45, 59,119]  # P4/16
-  - [116,90, 156,198, 373,326]  # P5/32
+width_layer: [Conv, C2f, SPPF, AnchorFreeDetect]
+
 # [from,  module, args], args=[ch_in , ch_out, etc]
 backbone:
   [[-1, Conv, [32, 6, 2, 2]],  # 0-P1/2
@@ -40,7 +34,7 @@ neck:
   ]
 
 head:
-  [[[19, 15, 11], Detect, [[128, 256, 512], nc, anchors]], # Detect(P3, P4, P5)
+  [[[19, 15, 11], AnchorFreeDetect, [[128, 256, 512], nc, 4]], # Detect(P3, P4, P5)
   ]
 
 #2023-07-05 17:21:31,923-

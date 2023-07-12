@@ -87,6 +87,10 @@ def plt_plot(x):
     plt.close()
 
 def gradcam(gradients, activations, h, w):
+    if activations.ndim==3:
+        b, k, a = activations.size()
+        scale_factor = a/h/w
+        activations = activations.view(b, k, int(scale_factor*h), -1)
     # feature_visualization(activations)
     if gradients is not None:
         b, k, u, v = gradients.size()
@@ -108,6 +112,19 @@ def gradcam(gradients, activations, h, w):
     # plt_plot(saliency_map.squeeze())
     return saliency_map
 
+def get_module(model,module_dict, prefix=''):
+    prefix +=model._get_name()
+    layer_num = 0
+    for (k, lm) in model.named_children():
+        layer_num+=1
+        if len(lm._modules):
+            module_dict = get_module(lm, module_dict, prefix+k)
+        else:
+            module_dict[prefix+k] = lm
+    if layer_num==0:
+        module_dict[prefix] =  model
+    return module_dict
+
 class GradCAM:
     def __init__(self, model, layer=None, img_size=(640, 640),use_grad=True):
         if use_grad:
@@ -120,34 +137,57 @@ class GradCAM:
         self.gradients = []
         self.activations = []
         self.cam_layer = []
+        model_layer = len(self.model.model)
+        print('model layer length is :', model_layer)
         if layer is not None:
             if isinstance(layer, int):
-                layer = range(layer)
+                layer = (0, layer)
+
+            if isinstance(layer, list):
+                for i, l in enumerate(layer):
+                    if l < 0:
+                        layer[i] = model_layer + l
+
+            elif isinstance(layer, tuple):
+                start = layer[0]+model_layer if layer[0]<0 else layer[0]
+                end = layer[1]+model_layer+1 if layer[1]<0 else layer[1]
+                layer= range(start, end)
         else:
             layer = input('which layer do you want to select:(input the id number and split in space key,\n').split(' ')
             layer = [int(i) for i in layer]
         # Because of https://github.com/pytorch/pytorch/issues/61519,
         # we don't use backward hook to record gradients.
+        module_dict = {}
         for i, layer_module in enumerate(self.model.model):
             if layer is not None:
                 if i not in layer:
                     continue
-            if isinstance(layer_module, Detect):
-                for i, lm in enumerate(layer_module.m):
-                    lm.register_forward_hook(self.save_activation)  # self.save_activation
-                    lm.register_forward_hook(self.save_gradient)
-                    self.cam_layer.append(f'Detect_{i}_'+ lm._get_name())
-            else:
-                layer_module.register_forward_hook(self.save_activation)  # self.save_activation
-                layer_module.register_forward_hook(self.save_gradient)
-                self.cam_layer.append(layer_module._get_name())
-
+            # if isinstance(layer_module, Detect):
+            # if i==model_layer-1:
+            #     for k, lm in layer_module._modules.items():
+            #         lm.register_forward_hook(self.save_activation)  # self.save_activation
+            #         lm.register_forward_hook(self.save_gradient)
+            #         self.cam_layer.append(f'layer_{i}_{k}_'+ lm._get_name())
+            # else:
+            #     layer_module.register_forward_hook(self.save_activation)  # self.save_activation
+            #     layer_module.register_forward_hook(self.save_gradient)
+            #     self.cam_layer.append(f'layer_{i}_'+layer_module._get_name())
+            module_dict = get_module(layer_module, module_dict)
+        print(module_dict)
+        for k, layer_module in module_dict.items():
+            layer_module.register_forward_hook(self.save_activation)  # self.save_activation
+            layer_module.register_forward_hook(self.save_gradient)
+        self.cam_layer =  list(module_dict.keys())
         # device = 'cuda' if next(self.model.model.parameters()).is_cuda else 'cpu'
         # self.model(torch.zeros(1, 3, *img_size, device=device))
 
 
     def save_activation(self, module, input, output):
-        activation = output.clone()
+        try:
+            activation = output.clone()
+        except:
+            pass
+        print(module, output.size())
         self.activations.append(activation.cpu().detach())
         # print('[INFO] saliency_map_size :', self.activations.shape[2:])
         # self.activations['value'] = activation.cpu().detach()
@@ -199,9 +239,13 @@ class GradCAM:
         if self.use_grad:
 
             # select_id = logits[..., 0].argsort(-1, descending=True)[:100]
-            # iou_log = logits[:, select_id][..., 0].mean()
+            # iou_log = logits[:, select_id, 0].mean()
 
-            iou_log = logits[..., 0].flatten().sort(descending=True)[0].mean()  #sort 返回 （value, key）
+            # iou_log = logits[..., 0].flatten().sort(descending=True)[0]  #sort 返回 （value, key）
+            # iou_log = iou_log.mean()
+
+            # iou_log = logits[..., 0].flatten().max()  # sort 返回 （value, key）
+            iou_log = logits[..., 0].flatten().mean()  # sort 返回 （value, key）
             print(iou_log)
 
             self.model.zero_grad()
@@ -243,10 +287,10 @@ class GradCAM:
 
 
 if __name__ == '__main__':
-    weight = '../../results/train/drone/zjdet_unet/exp/weights/best.pt'
+    weight = '../../results/train/drone/zjdet_v8s/exp/weights/best.pt'
     device = 'cpu'
     img_path = '../../../data/visdrone/images/train/0000071_04085_d_0000007.jpg'
-    img_size = (960, 540)
+    img_size = (480, 270)
     im = torch.zeros(1, 3, img_size[1], img_size[0])
     bgr = True
     gramtype = 'all'
@@ -270,7 +314,7 @@ if __name__ == '__main__':
     #     model.requires_grad_(True)  # 使用grad weight加权
     #     model.eval()
 
-    saliency_method = GradCAM(model=model, layer=11,
+    saliency_method = GradCAM(model=model, layer=[-2, -1],
                                     img_size=img_size, use_grad=True)
     masks,  det_img  = saliency_method(im)
     layer_num = len(masks)
@@ -282,7 +326,6 @@ if __name__ == '__main__':
 
         if gramtype == "all":
 
-            plt.figure(figsize=(12, 9), tight_layout=True)
             res_img, heatmat = get_all_res_img(mask, res_img)
             color_img = (res_img * 255).astype(np.uint8)
             for *xyxy, conf, cls in reversed(det_img):

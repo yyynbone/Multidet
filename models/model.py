@@ -18,7 +18,7 @@ try:
 except ImportError:
     thop = False
 
-det_head = (Detect, YOLOv8Detect, IDetect, MaskDetect)
+det_head = (Detect, YOLOv8Detect, IDetect, MaskDetect, AnchorFreeDetect)
 cls_head = (Classify, YOLOv8Classify, SqueezenetClassify, ObjClassify, Flatten)
 def parse_model(d, ch_in, logger=LOGGER):  # model_dict, input_channels(3)
     print_log(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}", logger)
@@ -245,12 +245,12 @@ class Model(nn.Module):
                 self._profile_one_layer(m, x, dt, thops, paras)
             # print(i, m)
             if not isinstance(m, cls_head):
-                x = m(x)  # run
-                # try:
-                #     x = m(x)# run
-                # except:
-                #     print_log(f'{i}, is {m}', self.logger)
-                #     print_log([j.shape for j in (x if isinstance(x, list) else [x])], self.logger)
+                # x = m(x)  # run
+                try:
+                    x = m(x)# run
+                except Exception as e:
+                    print_log(f'{m._get_name()} error {e}', self.logger)
+                    print_log([j.shape for j in (x if isinstance(x, list) else [x])], self.logger)
             # if i==0:
             #     from utils import show_model_param
             #     show_model_param(m, path='./exp')
@@ -364,7 +364,7 @@ class Model(nn.Module):
                 m.conv = fuse_conv_and_bn(m.conv, m.bn)  # update conv
                 delattr(m, 'bn')  # remove batchnorm
                 m.forward = m.forward_fuse  # update forward
-        self.info(verbose=True)
+        self.info(verbose=False)
         return self
 
     def info(self, verbose=False, img_size=640):  # print model information
@@ -405,7 +405,7 @@ if __name__ == '__main__':
     FILE = Path(__file__).resolve()
     ROOT = FILE.parents[1]
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/zjdet_neck_small.yaml', help='model.yaml')
+    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/zjdet_v8s_afree.yaml', help='model.yaml')
     parser.add_argument('--device', default='0', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--profile', default=True, help='profile model speed')
     parser.add_argument('--test', action='store_true', help='test all yolo*.yaml')

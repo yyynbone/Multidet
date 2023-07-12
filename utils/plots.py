@@ -446,15 +446,16 @@ def plot_results(file='path/to/results.csv', save_name='results.png',dir=''):
             for i,now_title in enumerate(new_title):
                 for j in range(1, len(s)):
                     s_p = s[j].split('/')
+                    y = data.values[:, j]
+                    y = y.astype(np.float64)
+                    # y = np.where(y==np.inf, -0.1, y)
                     if now_title=='lr':
                         if now_title in s_p[-1]:
-                            y = data.values[:, j]
                             label = s_p[-1]
                             ax[i].plot(x, y, marker='.', label=label, linewidth=2, markersize=8)  # f.stem = 'results'
                             ax[i].set_title(now_title, fontsize=12)
                             ax[i].legend(loc=1)
                     if now_title == s_p[-1]:
-                        y = data.values[:, j]
                         # y[y == 0] = np.nan  # don't show zero values
                         if 'loss' in now_title:
                             label = s_p[0]
@@ -687,3 +688,4 @@ def save_object(ims, targets, preds_float, paths=None, save_dir='exp', visual_ta
             if f_map is not None:
                 if len(f_map[i].shape)==3:
                     map_visualization(f_map[i].sigmoid(), f_path=f_path)
+

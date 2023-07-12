@@ -1,5 +1,5 @@
 # Parameters
-depth_multiple: 0.33  # model depth multiple
+depth_multiple: 1.  # model depth multiple
 width_multiple: 0.5  # layer channel multiple
 depth_layer: [C2f]
 width_layer: [Conv, C2f, SPPF, Detect]

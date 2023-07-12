@@ -100,7 +100,8 @@ def img2seg_labels(img_paths, mask_suffix='.png'):
 def img2seg_label(img_path, mask_suffix='.png'):
     # Define label paths as a function of image paths
     sa, sb, sm = os.sep + 'images' + os.sep, os.sep + 'labels' + os.sep, os.sep + 'labels' + os.sep + 'masks' + os.sep
-    parent = img_path.split('images')[0]
+    # parent = img_path.split('images')[0]
+    parent = img_path.rsplit(sa, 1)[0]
     if os.path.exists(parent+sb):
         label_path = sb.join(img_path.rsplit(sa, 1)).rsplit('.', 1)[0] + '.txt'
         if not os.path.exists(label_path):
@@ -144,7 +145,7 @@ def initial_result(img_f, img_size=(640,640)):
     result['segment'] = None
     result['instance_segments'] = None
     if isinstance(img_f, str):
-        result['filename'] = img_f
+        result['filename'] = str(Path(img_f))
     else:
         im = img_f
         result['img'] = img_f
@@ -212,6 +213,12 @@ def get_yolotxt(label_file, select_class):
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
         l =  np.loadtxt(label_file).reshape(-1, 5)
+        nl = len(l)
+        _, i = np.unique(l, axis=0, return_index=True)
+        if len(i) < nl:  # duplicate row check
+            print('duplicate labels', [{x: l[x]} for x in range(nl) if x not in i])
+            l = l[i]  # remove duplicates
+            np.savetxt(label_file, l, fmt='%d')
     # select category we wanted:
     if len(select_class):
         try:
@@ -580,7 +587,15 @@ def load_mosaics(results, num=10, more_add=4):
 #     new_result['instance_segments'] = segments_all if segments_all else None
 #     return  new_result
 
-def crop2merge(img, crop_w, crop_h, merged_bx1, merged_by1,  labels=None, instance_segment=None, iou_thres=0.4, pix_thres=8,
+
+def filter_fix(labels, pix_thres=1):
+    # filter fix
+    labels_area = xyxy2xywh(labels[..., 1:])
+    idx = np.where(np.logical_and(labels_area[..., 2] >= pix_thres, labels_area[..., 3] >= pix_thres))
+    return labels[idx], labels_area[idx]
+
+
+def crop2merge(img, crop_w, crop_h, merged_bx1, merged_by1,  labels=None, instance_segment=None, iou_thres=0.4, pix_thres=1,
                crop_obj=True, max_obj_center=True, select_idx=None, crop_from=None):
     """
     crop image array of shape(crop_w, crop_h) and transform labels to the axis of new image, used in mosaic and crop from big image
@@ -610,7 +625,8 @@ def crop2merge(img, crop_w, crop_h, merged_bx1, merged_by1,  labels=None, instan
 
     # Labels
     if labels is not None:
-        labels_area = xyxy2xywh(labels[..., 1:])
+        labels, labels_area = filter_fix(labels)
+
         # if child image has labels, we should copy the image segment with labels
         if len(labels) and crop_obj:
             if select_idx is None:
@@ -647,6 +663,8 @@ def crop2merge(img, crop_w, crop_h, merged_bx1, merged_by1,  labels=None, instan
             area = bbox_overlaps(labels[:, 1:],
                                  np.array([[new_pic_x, new_pic_y, new_pic_x + crop_w, new_pic_y + crop_h]]))
         if area is not None:
+            if (labels_area[:,2:]==0).any():
+                print('0 in labels area', labels_area)
             iou = area / (labels_area[:, 2] * labels_area[:, 3])
             idx = np.where(np.logical_and(iou >= iou_thres, area >= pix_thres * pix_thres))
             # idx = np.where(iou >= 0.4)[0]
@@ -735,7 +753,7 @@ def load_mosaic(results, indice=None, more_add=6):
     new_result['instance_segments'] = segments_all if segments_all else None
     return  new_result
 
-def load_big2_small(result, cropped_imgsz, crop_dir='crop', obj_repeat=2, bg_repeat=2, iou_thres=0.4, pix_thres=8, save_crop=True,slide_crop=False):
+def load_big2_small(result, cropped_imgsz, crop_dir='crop', obj_repeat=2, bg_repeat=2, iou_thres=0.4, pix_thres=1, save_crop=True,slide_crop=False):
     crop_h, crop_w = cropped_imgsz
     small_results = []
     # result = deepcopy(big_result)
@@ -847,3 +865,8 @@ def autosplit(path='../datasets/coco128/images', weights=(0.9, 0.1, 0.0), annota
         if not annotated_only or Path(img2seg_label(str(img))[0]).exists():  # check label
             with open(path.parent / txt[i], 'a') as f:
                 f.write('./' + img.relative_to(path.parent).as_posix() + '\n')  # add image to txt file
+
+# if __name__ == '__main__':
+#     img_f =  '../../data/visdrone/images/train/0000140_00118_d_0000002.jpg'
+#     result = initial_result(img_f)
+#     load_label(result, select_class=(3, 4, 5, 8))
