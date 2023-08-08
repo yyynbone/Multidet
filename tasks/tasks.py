@@ -26,7 +26,7 @@ from utils.lr_schedule import *
 from utils import ( check_dataset, check_img_size, check_suffix, colorstr, time_sync, init_seeds, var_size,
                     labels_to_class_weights, labels_to_image_weights, strip_optimizer, cal_flops, intersect_dicts,
                     Callback, de_parallel, torch_distributed_zero_first, EarlyStopping, ModelEMA, LossSaddle,
-                    output_to_target, xywh2xyxy, xyxy2xywh, non_max_suppression_with_iof,
+                    output_to_target, xywh2xyxy, xyxy2xywh, non_max_suppression_with_iof, fitness,
                     div_area_idx, process_batch,  ConfusionMatrix, det_calculate, det_coco_calculate,
                     select_class_tuple, save_one_txt, save_one_json,  plot_results, plot_images, plot_labels,
                     visual_match_pred, print_log, classify_match, save_object )
@@ -134,8 +134,7 @@ def before_train(hyp, opt, logger):
         ts_p = getattr(opt, "train_sample_portion", 0.8)
         vs_p = getattr(opt, "train_sample_portion", 0.2)
         train_dataset, val_dataset, _ = train_val_split(all_dataset, split_weights=(ts_p, vs_p, 1-ts_p-vs_p ), save_dir='_auto_split')
-        opt.train_sample_portion = 1
-        opt.val_sample_portion = 1
+        opt.train_val_split = True
 
 
     mlc = 0  # int(np.concatenate(train_dataset.labels, 0)[:, 0].max())  # max label class
@@ -183,8 +182,10 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
         callbacks = Callback(save_dir, opt, logger=logger)  # callback instance
     else:
         callbacks =None
-
-        # Model
+    if getattr(opt, 'train_val_split', False):
+        opt.train_sample_portion = 1
+        opt.train_sample_portion = 1
+    # Model
     check_suffix(weights, '.pt')  # check weights
     pretrained = weights.endswith('.pt')
     if opt.bgr:
@@ -233,6 +234,7 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
                                         obj_mask=getattr(opt, "train_obj_mask", 0),
                                         sample_portion=getattr(opt, "train_sample_portion", 1),
                                         pix_area=getattr(opt, 'pix_area', None),
+                                        # pix_area=[2, 100],
                                         cropped_imgsz=getattr(opt, "train_cropped_imgsz", False),
                                         slide_crop=getattr(opt, "slide_crop", False),
                                         crop_portion=getattr(opt, "crop_sample_portion", 1.),
@@ -589,8 +591,8 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
                 # if i > 1:
                 #     break
                 ni = i + nb * epoch  # number integrated batches (since train start)
-                imgs = imgs.to(device, non_blocking=True).float() / 255  # uint8 to float32, 0-255 to 0.0-1.0
-
+                # imgs = imgs.to(device, non_blocking=True).float() / 255  # uint8 to float32, 0-255 to 0.0-1.0
+                imgs = imgs.to(device, non_blocking=True)
                 # Warmup
                 if ni <= nw:
                     xi = [0, nw]  # x interp
@@ -751,6 +753,9 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
                                            div_area=opt.div_area,
                                            last_conf=opt.last_conf,
                                            loss_num=loss_num,
+                                           iof_nms=getattr(opt, 'iof_nms', False),
+                                           iouv=getattr(opt, 'iouv', [0.3, 0.95]),
+                                           conf_thresh=getattr(opt, 'conf_thresh', 0.001),
                                            logger=logger)
                 if not opt.val_first:
                     loss_tuple = results[-1]
@@ -765,8 +770,8 @@ def train(opt, logger, device, train_data, train_pre, val_data, val_pre,  local_
                     print_log(msg, logger)
 
                     # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
-                    # fi = fitness(np.array(all_results).reshape(1, -1))
-                    fi = all_results[3]
+                    fi = fitness(np.array(all_results).reshape(1, -1))
+                    # fi = all_results[3]
                     precision_fi, recall_fi = all_results[:2]
 
                     callbacks.on_fit_epoch_end(log_vals, epoch)
@@ -897,6 +902,7 @@ def val(data,
         compute_loss=None,
         bgr=1,
         div_area=None,
+        focus_area=0,
         last_conf=0.1,
         loss_num=3,
         class_map=list(range(1, 81)), # class_map save to json, so categoryid from 1.
@@ -930,7 +936,7 @@ def val(data,
     model.eval()
     # nc = len(model['names'])  if hasattr(model, 'names') else int(data['nc'])  # number of classes
     nc = model.nc if hasattr(model, 'nc') else int(data['nc']) # number of classes
-    iouv = torch.linspace(iouv[0], iouv[1], int((iouv[1]-iouv[0])/0.05)+1).to(device)  # iou vector for mAP@0.5:0.95
+    iouv = torch.linspace(iouv[0], iouv[1], round((iouv[1]-iouv[0])/0.05)+1).to(device)  # iou vector for mAP@0.5:0.95
     niou = iouv.numel()
 
     seen = 0
@@ -950,10 +956,16 @@ def val(data,
     pbar = tqdm(dataloader, desc='validate detection', bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}')  # progress bar
 
     for batch_i, (im, targets, paths) in enumerate(pbar):
-
+        if batch_i==0:
+            shape = list(im.shape)
         # if batch_i >1:
         #     break
         seen += len(im)
+        assert len(im)==len(paths), 'img length not equal to paths'
+        for path in paths:
+            file = save_dir / 'all_img.txt'
+            with open(file, 'a+') as f:
+                f.write(f'{Path(path).stem}\n')
         t1 = time_sync()
         im = im.to(device, non_blocking=True)
         targets = [t.to(device) if t is not None else t for t in targets]
@@ -961,7 +973,7 @@ def val(data,
 
         im = im.half() if half else im.float()  # uint8 to fp16/32
         # print(im.shape)
-        im /= 255  # 0 - 255 to 0.0 - 1.0
+        # im /= 255  # 0 - 255 to 0.0 - 1.0
 
         # warmup
         if weights is not None and batch_i==0:
@@ -1012,12 +1024,22 @@ def val(data,
                         area = (labels[:, 2] * labels[:, 3]).cpu()
                         area_idx = div_area_idx(area, div_area, area_idx)
                         stats.append((torch.zeros(0, div_class_num, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls, area_idx))
+
+                    # Save/log
+                    if save_txt:
+                        file = save_dir / 'labels' / 'none_pred' / (path.stem + '.txt')
+                        file.parent.mkdir(parents=True, exist_ok=True)
+                        with open(file, 'a') as f:
+                            f.write('\n')
+                    if save_json:
+                        image_id = int(path.stem) if path.stem.isnumeric() else path.stem
+                        jdict.append({'image_name': image_id, 'bbox': None})
+
                     continue
 
                 # Predictions
                 predn = pred.clone()   # predn is a pred from scaled image to origin size image
                 # scale_coords(im[si].shape[1:], predn[:, :4], shape, shapes[si][1])  # native-space pred
-
                 # Evaluate
                 if nl:
                     tbox = xywh2xyxy(labels[:, 1:5])  # target boxes
@@ -1061,7 +1083,7 @@ def val(data,
                     visual_match_pred(im[si], match_id, pred_b_s_l, box_l, path, save_dir=save_dir, names=names,
                                       conf_ts=last_conf) #correct is shape of [n, div_area=4, iou=10]
             # Plot images
-            if plots and batch_i % (2560//batch_size) == 0:
+            if plots and batch_i % (1000//batch_size) == 0:
             # if plots and random.randint(1, 100) < 20 if len(pbar)>10 else 100:
                 plot_tar = targets
                 plot_pred = output_to_target(out)
@@ -1096,7 +1118,7 @@ def val(data,
         det_result = (ps[1], rs[1], 0, accus[0], (loss.cpu() / len(dataloader)).tolist())
         # Print speeds
         t = tuple(x / seen * 1E3 for x in dt)  # speeds per image
-        shape = (batch_size, ch_in, imgsz[0], imgsz[1])
+
         print_log(
             f'all image number is {seen}, which cost {sum(dt)}s\nSpeed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {shape}' % t, logger)
         return det_result, 0, t
@@ -1105,7 +1127,8 @@ def val(data,
         _, _, _ = classify_match(*cls_stats_indet, conf_ts=(getattr(model, 'class_conf', 0.4)), logger=logger)
 
     if len(stats) and stats[0].any():
-        mp, mr, map50, map, ap, ap_class, p, r, = det_calculate(stats, div_area, nc, last_conf, save_dir, names, plots, verbose, logger)
+        lmp, lmr, lmap50, lmap, ap, ap_class, p, r, = det_calculate(stats, div_area, nc, last_conf, save_dir, names, plots, verbose, logger)
+        mp, mr, map50, map = lmp[0, 0, focus_area], lmr[0, 0, focus_area], lmap50[0, 0, focus_area], lmap[0, 0, focus_area]
         maps = np.zeros(nc) + map
         for i, c in enumerate(ap_class):
             maps[c] = ap[i, 0]
@@ -1118,7 +1141,7 @@ def val(data,
     # Print speeds
     t = tuple(x / seen * 1E3 for x in dt)  # speeds per image
 
-    shape = (batch_size, ch_in, imgsz[0], imgsz[1])
+    
     print_log(f'all image number is {seen}, which cost {sum(dt)}s\nSpeed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {shape}' % t, logger)
 
     # Plots
@@ -1127,7 +1150,7 @@ def val(data,
 
     # Save JSON
     if save_json and len(jdict):
-        det_coco_calculate(weights, data, task, save_dir, logger, jdict, last_conf, visual_matched)
+        det_coco_calculate(weights, data, task, save_dir, logger, jdict, last_conf, visual_matched, crop_img=(dataloader.dataset.cropped_imgsz is not False or getattr(data, 'is_crop', False)) )
 
     print_log(f"Results saved to {save_dir}", logger)
 
@@ -1199,7 +1222,7 @@ def predict(data,
 
         im = im.half() if half else im.float()  # uint8 to fp16/32
         # print(im.shape)
-        im /= 255  # 0 - 255 to 0.0 - 1.0
+        # im /= 255  # 0 - 255 to 0.0 - 1.0
 
         # warmup
         if weights is not None and batch_i==0:

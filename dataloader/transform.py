@@ -52,6 +52,7 @@ def adapt_pad(result, pad_color=(114, 114, 114),seg_pad_color=(0, 0, 0), auto=Tr
     result['segment'] = seg
     labels = result.get('labels', None)
     result['pad'] = (dw, dh)
+
     if labels is not None:
         if labels.size:  # normalized xywh to pixel xyxy format
             # w, h = ratio[1] * result['resized_shape'][1], ratio[0] * result['resized_shape'][0]
@@ -65,14 +66,50 @@ def adapt_pad(result, pad_color=(114, 114, 114),seg_pad_color=(0, 0, 0), auto=Tr
                 segments = [xyn2xy(x, ratio[1], ratio[0], dw, dh) for x in segments]
                 result['instance_segments'] = segments
 
-def resize(result, augment=False):
+# def resize(result, augment=False, pad=True):
+#     h, w = result['img'].shape[:2]
+#     # h, w = result['img_shape']
+#     r = min(result['img_size'][0] / h, result['img_size'][1] / w)  # ratio
+#     result['resized_shape'] = (h, w)
+#     if r != 1:  # if sizes are not equal
+#         interpolation = cv2.INTER_AREA if r < 1 and not augment else cv2.INTER_LINEAR
+#         if pad:
+#             result['resized_shape'] = (int(w * r), int(h * r))
+#         else:
+#             result['resized_shape'] = (result['img_size'][1], result['img_size'][0])
+#         result['img'] = cv2.resize(result['img'], result['resized_shape'],
+#                         interpolation=interpolation)
+#         if result['segment'] is not None:
+#             result['segment'] = cv2.resize(result['segment'], result['resized_shape'],
+#                                        interpolation=interpolation)
+#         labels = result.get('labels', None)
+#         if labels is not None:
+#             if labels.size:
+#                 labels[:, 1:] = xyn2xy(labels[:, 1:], r, r)
+#
+#                 result['labels'] = labels
+#                 segments = result['instance_segments']
+#                 if segments is not None:
+#                     segments = [xyn2xy(x, r, r, 0, 0) for x in segments]
+#                     result['instance_segments'] = segments
+
+def resize(result, augment=False, pad=True):
     h, w = result['img'].shape[:2]
     # h, w = result['img_shape']
-    r = min(result['img_size'][0] / h, result['img_size'][1] / w)  # ratio
-    result['resized_shape'] = (h, w)
-    if r != 1:  # if sizes are not equal
-        interpolation = cv2.INTER_AREA if r < 1 and not augment else cv2.INTER_LINEAR
-        result['resized_shape'] = (int(w * r), int(h * r))
+    ratio = (result['img_size'][1] / w, result['img_size'][0] / h)  # ratio
+    if pad:
+        r = min(ratio)
+        if r !=1 :
+            result['resized_shape'] = (int(w * r), int(h * r))
+            ratio = (r, r)
+        else:
+            result['resized_shape'] = (w, h)
+            ratio = (1., 1.)
+    else:
+        result['resized_shape'] = (result['img_size'][1], result['img_size'][0])
+
+    if ratio != (1., 1.):  # if sizes are not equal
+        interpolation = cv2.INTER_AREA if min(ratio) < 1 and not augment else cv2.INTER_LINEAR
         result['img'] = cv2.resize(result['img'], result['resized_shape'],
                         interpolation=interpolation)
         if result['segment'] is not None:
@@ -81,12 +118,11 @@ def resize(result, augment=False):
         labels = result.get('labels', None)
         if labels is not None:
             if labels.size:
-                labels[:, 1:] = xyn2xy(labels[:, 1:], r, r)
-
+                labels[:, 1:] = xyn2xy(labels[:, 1:], ratio[0], ratio[1])
                 result['labels'] = labels
                 segments = result['instance_segments']
                 if segments is not None:
-                    segments = [xyn2xy(x, r, r, 0, 0) for x in segments]
+                    segments = [xyn2xy(x, ratio[0], ratio[1],  0, 0) for x in segments]
                     result['instance_segments'] = segments
 
 def flip(result, p_ud=0.5, p_lr=0.5):
@@ -172,8 +208,10 @@ def gray(result, clahe_p=0):
 #     result['img'] = img
 
 def dict2eval(objs, is_class=None):
+    funcs = []
     if isinstance(objs, list):
-        return [dict2eval(obj, is_class=is_class) for obj in objs]
+        for obj in objs:
+            funcs.extend(dict2eval(obj, is_class=is_class))
     else:
         funcs = []
         for k, args in objs.items():
@@ -185,7 +223,8 @@ def dict2eval(objs, is_class=None):
                 else:
                     funcs.append(partial(eval(k), **args))
 
-        return funcs[0] if len(funcs)==1 else funcs
+        # return funcs[0] if len(funcs)==1 else funcs
+    return funcs
 
 def transform(result, hyp=None, augment=False, albumentations=None):
     resize(result, augment=augment)
@@ -269,7 +308,7 @@ class Transfrom():
         albums = trans_dict.get('albumentations', None)
         if albums is not None:
             for para, value in albums.items():
-                albums[para] = dict2eval(value, A)
+                albums[para] = dict2eval(value, A)[0]
 
             compose = A.Compose(**albums)  # format ['pascal_voc', 'albumentations', 'coco', 'yolo']
             print_log(colorstr('albumentations: ') + ', '.join(f'{x}' for x in compose.transforms if x.p), logger)

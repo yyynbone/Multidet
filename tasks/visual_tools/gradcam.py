@@ -8,6 +8,8 @@ import math
 import cv2
 from utils import non_max_suppression_with_iof, xywh2xyxy, box_iou  #将plt.get_backend 修改为agg
 from models import attempt_load, Detect #将plt.get_backend 修改为agg
+from loss import LossV5, LossV8
+from dataloader import get_dataset, LoadImagesAndLabels, load_labels, load_results
 import matplotlib
 import matplotlib.pyplot as plt
 matplotlib.use('TkAgg')
@@ -126,12 +128,14 @@ def get_module(model,module_dict, prefix=''):
     return module_dict
 
 class GradCAM:
-    def __init__(self, model, layer=None, img_size=(640, 640),use_grad=True):
+    def __init__(self, model, layer=None, img_size=(640, 640),use_grad=True, loss_name=None):
         if use_grad:
             model.requires_grad_(True)  # 使用grad weight加权
+            model.train()
         else:
             model.requires_grad_(False)  # 使用grad weight加权
-        model.eval()
+            model.eval()
+
         self.use_grad = use_grad
         self.model = model
         self.gradients = []
@@ -180,14 +184,14 @@ class GradCAM:
         self.cam_layer =  list(module_dict.keys())
         # device = 'cuda' if next(self.model.model.parameters()).is_cuda else 'cpu'
         # self.model(torch.zeros(1, 3, *img_size, device=device))
+        self.loss = eval(loss_name)(self.model) if loss_name is not None else None
 
 
     def save_activation(self, module, input, output):
         try:
             activation = output.clone()
         except:
-            pass
-        print(module, output.size())
+            print(module, output.size())
         self.activations.append(activation.cpu().detach())
         # print('[INFO] saliency_map_size :', self.activations.shape[2:])
         # self.activations['value'] = activation.cpu().detach()
@@ -213,8 +217,32 @@ class GradCAM:
         output.register_hook(_store_grad)  #注册backward hook,
         return None
 
+    def get_grad(self, prediction, label):
+        if self.use_grad:
+            if self.loss is not None:
+                iou_log, _ = self.loss(prediction, label)
+            else:
+                logits = self.model.model[-1].get_logit(prediction)
 
-    def forward(self, input_img, class_idx=True):
+                # select_id = logits[..., 0].argsort(-1, descending=True)[:100]
+                # iou_log = logits[:, select_id, 0].mean()
+
+                # iou_log = logits[..., 0].flatten().sort(descending=True)[0]  #sort 返回 （value, key）
+                # iou_log = iou_log.mean()
+
+                # iou_log = logits[..., 0].flatten().max()  # sort 返回 （value, key）
+                iou_log = logits[..., 0].flatten().mean()  # sort 返回 （value, key）
+
+            print(iou_log)
+
+            self.model.zero_grad()
+            tic = time.time()
+            iou_log.backward(retain_graph=True)
+            self.gradients = self.gradients[::-1]
+            print("[INFO] model-backward took: ", round(time.time() - tic, 4), 'seconds')
+
+
+    def forward(self, input_img, label=None):
         """
         Args:
             input_img: input image with shape of (1, 3, H, W)
@@ -229,44 +257,12 @@ class GradCAM:
         prediction = self.model(input_img, augment=False)[-1]
         print("[INFO] model-forward took: ", round(time.time() - tic, 4), 'seconds')
         if self.model.training:
-            logits = self.model.model[-1].get_logit(prediction)
-            prediction = self.model.model[-1].test(prediction)
+            box_pred = self.model.model[-1].test(prediction)
 
         else:
-            prediction, log_pred = prediction
-            logits = self.model.model[-1].get_logit(log_pred)
+            box_pred, prediction = prediction
 
-        if self.use_grad:
-
-            # select_id = logits[..., 0].argsort(-1, descending=True)[:100]
-            # iou_log = logits[:, select_id, 0].mean()
-
-            # iou_log = logits[..., 0].flatten().sort(descending=True)[0]  #sort 返回 （value, key）
-            # iou_log = iou_log.mean()
-
-            # iou_log = logits[..., 0].flatten().max()  # sort 返回 （value, key）
-            iou_log = logits[..., 0].flatten().mean()  # sort 返回 （value, key）
-            print(iou_log)
-
-            self.model.zero_grad()
-            tic = time.time()
-            iou_log.backward(retain_graph=True)
-            self.gradients = self.gradients[::-1]
-            print("[INFO] model-backward took: ", round(time.time() - tic, 4), 'seconds')
-
-        preds = non_max_suppression_with_iof(prediction, 0.25, 0.6,  max_det=100,
-                                            iof_nms=False)
-        det_img = preds[0]
-        # last conf filter
-        det_img = det_img[det_img[:, 4] >= 0.4]  # [*xyxy, conf, cls ]
-
-        # preds = prediction[0][prediction[0][...,4]>=0.5]
-        #
-        #
-        # boxes = xywh2xyxy(preds[:, :4])
-        # conf = preds[:,4:5]
-        # cls_score, j = preds[:, 5:].max(1, keepdim=True)
-        # det_img = torch.cat((boxes, conf, j.float()), 1) # [*xyxy, conf, cls ]
+        self.get_grad(prediction, label)
 
         for i,(activations, gradients) in enumerate(zip(self.activations, self.gradients)):
             if gradients is not None:
@@ -277,31 +273,58 @@ class GradCAM:
                 #     print(gradients[0, 0, 0, :10])
             saliency_map = gradcam(gradients, activations, h, w)
             saliency_maps.append(saliency_map)
+
+
+        preds = non_max_suppression_with_iof(box_pred, 0.25, 0.6,  max_det=100,
+                                            iof_nms=False)
+        det_img = preds[0]
+        # last conf filter
+        det_img = det_img[det_img[:, 4] >= 0.4]  # [*xyxy, conf, cls ]
+
+        # preds = box_pred[0][box_pred[0][...,4]>=0.5]
+        # boxes = xywh2xyxy(preds[:, :4])
+        # conf = preds[:,4:5]
+        # cls_score, j = preds[:, 5:].max(1, keepdim=True)
+        # det_img = torch.cat((boxes, conf, j.float()), 1) # [*xyxy, conf, cls ]
         return saliency_maps, det_img
 
 
-    def __call__(self, input_img):
+    def __call__(self, input_img, label=None):
         self.gradients = []
         self.activations = []
-        return self.forward(input_img)
+        return self.forward(input_img, label)
 
 
 if __name__ == '__main__':
-    weight = '../../results/train/drone/zjdet_v8s/exp/weights/best.pt'
+    weight = '../../results/train/drone/zjdet_unet/exp3/weights/best.pt'
     device = 'cpu'
     img_path = '../../../data/visdrone/images/train/0000071_04085_d_0000007.jpg'
-    img_size = (480, 270)
-    im = torch.zeros(1, 3, img_size[1], img_size[0])
-    bgr = True
+    img_size = (270, 480)
     gramtype = 'all'
-    if not bgr:
-        img = cv2.imread(img_path, 0)
-        im[0] = torch.tensor(img[:, :][None] / 255.)
-    else:
-        img = cv2.imread(img_path)
-        img = cv2.resize(img, img_size, interpolation=cv2.INTER_LINEAR)
-        im[0] = torch.tensor(img.transpose(2, 0, 1) / 255.)
+    bgr = True
+    # im = torch.zeros(1, 3, *img_size)
+    # if not bgr:
+    #     img = cv2.imread(img_path, 0)
+    #     im[0] = torch.tensor(img[:, :][None] / 255.)
+    # else:
+    #     img = cv2.imread(img_path)
+    #     img = cv2.resize(img, (img_size[1], img_size[0]), interpolation=cv2.INTER_LINEAR)
+    #     im[0] = torch.tensor(img.transpose(2, 0, 1) / 255.)
 
+    val_pre = {'transform': {"resize": None,'adapt_pad':None} }
+    select_class = [3,4,5,8]
+    img_files =[img_path]
+    results = load_results(img_files, img_size=img_size)
+    results = load_labels(results, select_class=select_class)
+    val_pre['img_size'] = img_size
+    val_pre["gray"] = not bgr
+    for r in results:
+        r['select_class'] = select_class
+    val_dataset = LoadImagesAndLabels(val_pre,
+                                      results,
+                                      batch_size=1)
+    batch = [val_dataset.__getitem__(0)]
+    im, label, p = val_dataset.collate_fn(batch)
     model = attempt_load(weight, map_location=device)
     names = getattr(model, 'name', list(range(80)))
     print("[INFO] Model is loaded")
@@ -314,9 +337,9 @@ if __name__ == '__main__':
     #     model.requires_grad_(True)  # 使用grad weight加权
     #     model.eval()
 
-    saliency_method = GradCAM(model=model, layer=[-2, -1],
-                                    img_size=img_size, use_grad=True)
-    masks,  det_img  = saliency_method(im)
+    saliency_method = GradCAM(model=model, layer=(-3, -1),
+                                    img_size=img_size, use_grad=True, loss_name='LossV8')
+    masks,  det_img  = saliency_method(im, label)
     layer_num = len(masks)
     result = im.squeeze(0).mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).detach().cpu().numpy()
     for i, mask in enumerate(masks):

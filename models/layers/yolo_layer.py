@@ -2,7 +2,8 @@ import warnings
 import numpy as np
 import torch
 import torch.nn as nn
-from models.layers.common_layer import Conv, Bottleneck, DWConv, SeBlock, autopad
+from models.layers.common_layer import Conv, Bottleneck, DWConv, autopad
+from models.layers.attention_layer import SeBlock
 
 class BottleneckCSP(nn.Module):
     # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
@@ -160,6 +161,15 @@ class GhostBottleneck(nn.Module):
         # print(self.conv(x).shape)
         # print(self.shortcut(x).shape)
         return self.conv(x) + self.shortcut(x)
+
+
+class C3CBAM(C3):
+    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
+        super().__init__(c1, c2, n, shortcut, g, e)
+        c_ = int(c2 * e)  # hidden channels
+        self.m =  nn.Sequential(*(Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)))
+
+
 
 # yolov8 c2f
 class C2f(nn.Module):
@@ -397,3 +407,5 @@ class SPPCSPC(nn.Module):
         y1 = self.cv6(self.cv5(torch.cat([x1] + [m(x1) for m in self.m], 1)))
         y2 = self.cv2(x)
         return self.cv7(torch.cat((y1, y2), dim=1))
+
+

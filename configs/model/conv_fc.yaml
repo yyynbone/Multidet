@@ -1,0 +1,52 @@
+# Parameters
+depth_multiple: 1.  # model depth multiple
+width_multiple: 1.  # layer channel multiple
+depth_layer: []
+width_layer: []
+nc: 80
+backbone:
+
+  [ [-1, nn.Conv2d, [3, 1024, 3, 1, 1]],
+    [-1, nn.AdaptiveAvgPool2d, [1]],
+    [-1, AtConv1d, [3]],  #
+    [-1, Atfc, [1024]]
+  ]
+
+neck:
+  []
+head:
+  [
+  ]
+
+#                 from  n    params  module                                  arguments
+#  0                -1     28672  torch.nn.modules.conv.Conv2d            [3, 1024, 3, 1, 1]    #参数量 （k*k*input_c+1）*out_c
+#  1                -1         0  torch.nn.modules.pooling.AdaptiveAvgPool2d[1]
+#  2                -1         4  models.layers.attention_layer.AtConv1d  [3]                  #(k*1+1)*1
+#  3                -1   1049600  models.layers.attention_layer.Atfc      [1024]
+#Model Summary: 8layers, 1078276 parameters, 1078276 gradients,image size is (640, 640), 23.5 GFLOPs in cpu
+# time (ms)     GFLOPs     params                                    module                       input_size
+#      8.95    28.6654      28672  torch.nn.modules.conv.Conv2d              torch.Size([1, 3, 540, 960])
+#      2.40     1.0617          0  torch.nn.modules.pooling.AdaptiveAvgPool2d  torch.Size([1, 1024, 540, 960])
+#      0.10     0.0000          4  models.layers.attention_layer.AtConv1d    torch.Size([1, 1024, 1, 1])
+#      0.10     0.0021    1049600  models.layers.attention_layer.Atfc        torch.Size([1, 1024, 1, 1])
+#Model(
+#  1.078 M, 100.000% Params, 15.395 GFLOPs, 100.000% FLOPs,
+#  (model): Sequential(
+#    1.078 M, 100.000% Params, 15.395 GFLOPs, 100.000% FLOPs,
+#    (0): Conv2d(0.029 M, 2.659% Params, 14.864 GFLOPs, 96.545% FLOPs, 3, 1024, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+#    (1): AdaptiveAvgPool2d(0.0 M, 0.000% Params, 0.531 GFLOPs, 3.448% FLOPs, output_size=1)
+#    (2): AtConv1d(
+#      0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs,
+#      (a): Conv1d(0.0 M, 0.000% Params, 0.0 GFLOPs, 0.000% FLOPs, 1, 1, kernel_size=(3,), stride=(1,), padding=(1,))
+#    )
+#    (3): Atfc(
+#      1.05 M, 97.341% Params, 0.001 GFLOPs, 0.007% FLOPs,
+#      (a): Linear(1.05 M, 97.341% Params, 0.001 GFLOPs, 0.007% FLOPs, in_features=1024, out_features=1024, bias=True)
+#    )
+#  )
+#)
+#==============================
+#Input shape: (3, 540, 960)
+#Flops: 15.4 GFLOPs
+#Params: 1.08 M
+#==============================

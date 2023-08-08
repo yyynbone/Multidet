@@ -86,16 +86,21 @@ def parse_model(d, ch_in, logger=LOGGER):  # model_dict, input_channels(3)
         layers.append(m_)
     return nn.Sequential(*layers), sorted(save), (neck_from, head_from)
 
-def attempt_load(weights, map_location=None, cfg=None, inplace=True, fuse=True, ch=3, nc=80, logger=LOGGER):
+def attempt_load(weights, map_location=None, cfg=None, inplace=True, fuse=True, ch=3, nc=None, logger=LOGGER):
     # Loads an ensemble of models weights=[a,b,c] or a single model weights=[a] or weights=a
     model = Ensemble()
     for w in weights if isinstance(weights, list) else [weights]:
         ckpt = torch.load(w, map_location=map_location)  # load
-        if cfg is None:
+        if ckpt.get('ema') or ckpt.get('model'):
+        # if cfg is None:
             ckpt_model = ckpt['ema' if ckpt.get('ema') else 'model']
         else:
+            cfg = check_yaml(cfg)
             if ckpt.get( 'names'):
                 nc = len(ckpt['names'])
+            # assert nc is not None, 'cfg or weights class number should define'
+            if nc is None:
+                nc = int(input('cfg or weights class number should define, please input number\n'))
             ckpt_model = Model(cfg, ch=ch, nc=nc).to(map_location)
             if ckpt.get('names'):
                 ckpt_model.names = ckpt['names']
@@ -405,7 +410,7 @@ if __name__ == '__main__':
     FILE = Path(__file__).resolve()
     ROOT = FILE.parents[1]
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/zjdet_v8s_afree.yaml', help='model.yaml')
+    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/conv_fc.yaml', help='model.yaml')
     parser.add_argument('--device', default='0', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--profile', default=True, help='profile model speed')
     parser.add_argument('--test', action='store_true', help='test all yolo*.yaml')
@@ -448,13 +453,13 @@ if __name__ == '__main__':
     # tb_writer.add_graph(torch.jit.trace(model, img, strict=False), [])  # add model graph
 
 
-    #
-    # from utils import get_model_complexity_info
-    #
-    # flops, params = get_model_complexity_info(model, input_shape)
-    # split_line = '=' * 30
-    # print(f'{split_line}\nInput shape: {input_shape}\n'
-    #       f'Flops: {flops}\nParams: {params}\n{split_line}')   # GMac , 1 GMac = 2GFLOPs
-    # print('!!!Please be cautious if you use the results in papers. '
-    #       'You may need to check if all ops are supported and verify that the '
-    #       'flops computation is correct.')
+
+    from utils import get_model_complexity_info
+
+    flops, params = get_model_complexity_info(model, input_shape)
+    split_line = '=' * 30
+    print(f'{split_line}\nInput shape: {input_shape}\n'
+          f'Flops: {flops}\nParams: {params}\n{split_line}')   # GMac , 1 GMac = 2GFLOPs
+    print('!!!Please be cautious if you use the results in papers. '
+          'You may need to check if all ops are supported and verify that the '
+          'flops computation is correct.')

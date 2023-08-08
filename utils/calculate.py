@@ -7,7 +7,7 @@ from pathlib import Path
 from utils.label_process import xyxy2xywh, xywh2xyxy
 import time
 import torchvision
-from utils.plots import plot_pr_curve, plot_confusionmatrics, print_log
+from utils.plots import plot_pr_curve, plot_confusionmatrics, print_log, plot_mc_curve
 from utils.cal_coco import select_score_from_json, visual_return
 def bbox_iou(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False, eps=1e-7):
     # Returns the IoU of box1 to box2. box1 is 4, box2 is nx4
@@ -297,11 +297,18 @@ def fitness(x):
     # Model fitness as a weighted combination of metrics
     metric_num = x.shape[1]
     if metric_num>6:
-        w = [0.1, 0.3, 0.1, 0.9, 0.1, 0.1, 0.3]  # weights for [P, R, mAP@0.5, mAP@0.5:0.95]
+        w = [0.1, 0.3, 0.9, 0.3, 0.1, 0.1, 0.3]  # weights for [P, R, mAP@0.5, mAP@0.5:0.95]  # [0.1, 0.3, 0.1, 0.9, 0.1, 0.1, 0.3]
         return (x[:, :7] * w).sum(1)
     else:
-        w = [0.1, 0.3, 0.1, 0.9]
+        w = [0.1, 0.3, 0.9, 0.3]
         return (x[:, :4] * w).sum(1)
+
+def smooth(y, f=0.05):
+    # Box filter of fraction f
+    nf = round(len(y) * f * 2) // 2 + 1  # number of filter elements (must be odd)
+    p = np.ones(nf // 2)  # ones padding
+    yp = np.concatenate((p * y[0], y, p * y[-1]), 0)  # y padded
+    return np.convolve(yp, np.ones(nf) / nf, mode='valid')  # y-smoothed
 
 def calcu_per_class(tp: object, conf: object, pred_cls: object, target_cls: object, area_idx: object = None, plot: object = False, save_dir: object = '.', names: object = (),
                     conf_ts: object = 0.1,
@@ -316,14 +323,15 @@ def calcu_per_class(tp: object, conf: object, pred_cls: object, target_cls: obje
     # Returns
         The average precision as computed in py-faster-rcnn.
     """
+
     if not isinstance(conf_ts, (list, tuple)):
         conf_ts = [conf_ts]
     conf_length = len(conf_ts)
     # Sort by objectness
-    i = np.argsort(-conf)
-    tp, conf, pred_cls = tp[i], conf[i], pred_cls[i]
+    sort_i = np.argsort(-conf)
+    tp, conf, pred_cls = tp[sort_i], conf[sort_i], pred_cls[sort_i]
 
-    px, py = np.linspace(0, 1, 1000), []  # for plotting
+
     # Find unique classes
     # unique_classes, nt = np.unique(target_cls, return_counts=True)
     unique_classes = np.unique(target_cls)
@@ -334,6 +342,12 @@ def calcu_per_class(tp: object, conf: object, pred_cls: object, target_cls: obje
     p, r = np.zeros((conf_length, nc,  div_class_num)), np.zeros((conf_length, nc, div_class_num))
     pred_truth, lev_pn = np.zeros((conf_length, nc,  div_class_num)), np.zeros((conf_length, nc, div_class_num))
     area_idx[:, 0] = True
+
+    # add PR curve max P and R
+    px, py = np.linspace(0, 1, 1000), []  # for plotting
+    cur_p, cur_r = np.zeros((nc, div_class_num, 1000)), np.zeros((nc, div_class_num, 1000))
+
+
     for ci, c in enumerate(unique_classes):
         i = pred_cls == c
         for idx in range(div_class_num):
@@ -359,8 +373,11 @@ def calcu_per_class(tp: object, conf: object, pred_cls: object, target_cls: obje
                 tpc = tp_perc_area.cumsum(0)
                 # Recall
                 recall = tpc / (n_l + eps)  # recall curve
+                cur_r[ci, idx] = np.interp(-px, -conf_cls, recall[:, 0], left=0)  # negative x, xp because xp decreases
+
                 # Precision
                 precision = tpc / (tpc + fpc)  # precision curve
+                cur_p[ci, idx] = np.interp(-px, -conf_cls, precision[:, 0], left=1)  # negative x, xp because xp decreases
 
                 # AP from recall-precision curve
                 for j in range(tp.shape[2]):
@@ -368,19 +385,39 @@ def calcu_per_class(tp: object, conf: object, pred_cls: object, target_cls: obje
                     if plot and j == 0 and idx == 0:
                         py.append(np.interp(px, mrec, mpre))  # precision at mAP@0.5
 
-
                 for li, conf_t in enumerate(conf_ts):
                     precision_c = precision[conf_cls >= conf_t]
                     recall_c = recall[conf_cls >= conf_t]
                     p[li, ci, idx] = precision_c[-1, 0]  if precision_c.shape[0] else 0.  # -1 means the max ,0 means iou=0.5, precision shape [n,10]
                     r[li, ci, idx] = recall_c[-1, 0] if recall_c.shape[0] else 0.
-
+    # Compute F1 (harmonic mean of precision and recall)
+    f1 = 2 * cur_p * cur_r / (cur_p + cur_r + eps)
     names = [v for k, v in names.items() if k in unique_classes]  # list: only classes that have data
     names = {i: v for i, v in enumerate(names)}  # to dict
-    if plot and len(py):
-        plot_pr_curve(px, py, ap[:,0,:], Path(save_dir) / 'PR_curve.png', names)
+    f1_conf = [0 for _ in range(div_class_num)]
+    cur_prec, cur_rc,  cur_f1 = np.zeros((nc, div_class_num)), np.zeros((nc, div_class_num)), np.zeros((nc, div_class_num))
+    for show_div_idx in range(div_class_num):
 
-    return p, r, pred_truth, lev_pn, ap, unique_classes.astype('int32'), lev_tn
+        if plot and len(py):
+            plot_pr_curve(px, py, ap[:,show_div_idx,:], Path(save_dir) / f'div_area_{show_div_idx}_PR_curve.png', names)
+            plot_mc_curve(px, f1[:,show_div_idx,:], Path(save_dir) / f'div_area_{show_div_idx}_F1_curve.png', names, ylabel='F1')
+            plot_mc_curve(px, cur_p[:,show_div_idx,:], Path(save_dir) / f'div_area_{show_div_idx}_P_curve.png', names, ylabel='Precision')
+            plot_mc_curve(px, cur_r[:,show_div_idx,:], Path(save_dir) / f'div_area_{show_div_idx}_R_curve.png', names, ylabel='Recall')
+
+        max_i = smooth(f1[:, show_div_idx, :].mean(0), 0.1).argmax()  # max F1 index
+        f1_conf[show_div_idx] = round(px[max_i], 2)  # px 相当于把conf 映射到[0,1],共1000个数
+        # print(f'###########################\nnow we show PR curve in div_area{show_div_idx} and best conf is %11.3g'%(conf[i]))
+
+        cur_prec[:, show_div_idx], cur_rc[:, show_div_idx], cur_f1[:, show_div_idx] = cur_p[:, show_div_idx , max_i], cur_r[:, show_div_idx, max_i], f1[:, show_div_idx, max_i]
+        # for c in range(nc):
+        #     cp, cr, c_f1 = cur_p[c, show_div_idx , i], cur_r[c, show_div_idx, i], f1[c, show_div_idx, i]
+        #     pf = 'P:%11.3g   R:%11.3g  F1:%11.3g' # print format
+        #     print(f'in class id {c}: '+  pf % (cp, cr, c_f1))
+
+        # tp = (r * nt).round()  # true positives
+        # fp = (tp / (p + eps) - tp).round()  # false positives
+
+    return p, r, pred_truth, lev_pn, ap, unique_classes.astype('int32'), lev_tn, cur_prec, cur_rc,  cur_f1, f1_conf
 
 def compute_ap(recall, precision):
     """ Compute the average precision, given the recall and precision curves
@@ -566,7 +603,7 @@ def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, classes=Non
 
     return output
 
-def nms_iof(prediction, iof_thres=0.8):
+def nms_iof(prediction, iof_thres=0.6):
     """
     filter the box with iof and score
     :param prediction:
@@ -577,11 +614,13 @@ def nms_iof(prediction, iof_thres=0.8):
     for xi, nms_out in enumerate(prediction):
         # filter box with iof, then select box via score
         nms_box = nms_out[:, :4]
-        iof = box_iof(nms_box, nms_box) > iof_thres  # iou matrix , i*i
+        iof = box_iof(nms_box, nms_box)
+        iof_b = iof > iof_thres  # iou matrix , i*i
         nms_score = nms_out[:, 4].cpu()
         cls = nms_out[:, -1]
         cls_arr = cls[:,None] == cls[None]
-        iof_cls =  np.logical_and(cls_arr.cpu(), iof.cpu())  # numpy tensor must in cpu
+        cls_b =  np.logical_or(cls_arr.cpu(), (iof>0.8).cpu()) # cls_arr.cpu()
+        iof_cls =  np.logical_and(cls_b, iof_b.cpu())  # numpy tensor must in cpu
         m_i, n_i = torch.triu(iof_cls.long() - torch.eye(nms_box.shape[0])).nonzero(as_tuple=False).T
         filter_id = set(torch.where(nms_score[m_i] < nms_score[n_i], m_i, n_i).tolist())
         maintain_id = [ids for ids in range(len(nms_out)) if ids not in filter_id]
@@ -594,7 +633,7 @@ def non_max_suppression_with_iof(prediction, conf_thres=0.25, iou_thres=0.45, cl
                     agnostic=agnostic, multi_label=multi_label, labels=labels, max_det=max_det,
                     max_nms=max_nms, merge=merge)
 
-    return nms_iof(prediction, iof_thres=0.8) if iof_nms else prediction
+    return nms_iof(prediction, iof_thres=0.6) if iof_nms else prediction
 
 def classify_match(pred_out, class_label, conf_ts=0.5, logger=None):
     if pred_out.shape[1] > 1:
@@ -625,15 +664,15 @@ def classify_match(pred_out, class_label, conf_ts=0.5, logger=None):
         # logger_func(f"there are bg number {bg_num},  object number {obj_num}, pred object is {pred_num}, obj_matched {obj_match_num},  so P/{p:.3f} R/{r:.3f}")
     return ps, rs, accus
 
-def det_coco_calculate(weights, data, task, save_dir, logger, jdict, last_conf, visual_matched):
+def det_coco_calculate(weights, data, task, save_dir, logger, jdict, last_conf, visual_matched, crop_img=False):
     is_coco = isinstance(data.get('coco'), str) # and data['coco'].endswith('.json')  # COCO dataset
     w = Path(weights[0] if isinstance(weights, list) else weights).stem if weights is not None else ''  # weights
     # anno_json = str(Path(data.get('path', '../coco')) / 'annotations/instances_val2017.json')  # annotations json
     # anno_json = str(Path(data.get('path', '../coco')) / f'COCO/annotation/{task}.json')  # annotations json
 
     pred_json = str(save_dir / f"{w}_predictions.json")  # predictions json
-
-    convert_small2big_json(jdict)
+    if crop_img:
+        convert_small2big_json(jdict)
     ######### for Imageid  of filename 2 Imageid ################
     if is_coco:
         try:
@@ -723,58 +762,174 @@ def det_coco_calculate(weights, data, task, save_dir, logger, jdict, last_conf, 
 
         except Exception as e:
             print_log(f'pycocotools unable to run: {e}', logger)
-        
+
+# def det_calculate(stats, div_area, nc, last_conf, save_dir, names, plots,verbose, logger):
+#     s = ('%20s' + '%11s' * 7) % ('Class', 'Labels', 'R_num', 'P_num', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
+#     p, r, mp, mr, map50, map =  0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+#     ps, rs, pred_truths, lev_nps, ap, ap_class, nt = calcu_per_class(*stats, plot=plots, save_dir=save_dir, names=names,
+#                                                                      conf_ts=last_conf)
+#     ap50, ap = ap[..., 0], ap.mean(2)  # AP@0.5, AP@0. 5:0.95
+#
+#     if isinstance(div_area, (list, tuple)):
+#         div_area = [0, *div_area, 'inf']
+#     for li, conf_t in enumerate(last_conf):
+#         p, r, pred_truth, lev_np = ps[li], rs[li], pred_truths[li], lev_nps[li]
+#         # Print results
+#         print_log(s, logger)
+#         pf = '%20s' + '%11i' * 3 + '%11.3g' * 4  # print format
+#         all_tp, all_p, all_t = pred_truth[:, 0].sum(), lev_np[:, 0].sum(), nt[:, 0].sum()
+#
+#         mp, mr = all_tp / max(all_p, 1e-16), all_tp / max(all_t, 1e-16)
+#         map50, map = ap50[:, 0].mean(), ap[:, 0].mean()
+#         print_log(pf % (f'all_conf_{conf_t}', all_t, all_tp, all_p, mp, mr, map50, map), logger)
+#         if isinstance(div_area, (list, tuple)):
+#             for div_i in range(len(div_area)-1):
+#                 f_t, f_tp, f_p = nt[..., div_i+1], pred_truth[..., div_i+1], lev_np[..., div_i+1]
+#                 f_map50, f_map = ap50[..., div_i+1], ap[..., div_i+1]
+#                 f_map50 = (f_map50 * f_p).sum() / max(f_p.sum(), 1e-16)
+#                 f_map = (f_map * f_p).sum() / max(f_p.sum(), 1e-16)
+#                 f_t, f_tp, f_p = f_t.sum(), f_tp.sum(), f_p.sum()
+#                 f_mp, f_mr = f_tp / max(f_p, 1e-16), f_tp / max(f_t, 1e-16)
+#                 print_log(pf % (f'all_{div_area[div_i]}_to{div_area[div_i+1]}', f_t, f_tp, f_p, f_mp, f_mr, f_map50, f_map), logger)
+#
+#             # f_t, f_tp, f_p = area_filter(nt, -1), area_filter(pred_truth, -1), area_filter(lev_np, -1)
+#             # f_map50, f_map = area_filter(ap50, -1), area_filter(ap, -1)
+#             # f_map50 = (f_map50 * f_p).sum() / max(f_p.sum(), 1e-16)
+#             # f_map = (f_map * f_p).sum() / max(f_p.sum(), 1e-16)
+#             # f_t, f_tp, f_p = f_t.sum(), f_tp.sum(), f_p.sum()
+#             # f_mp, f_mr = f_tp / max(f_p, 1e-16), f_tp / max(f_t, 1e-16)
+#             # print_log(pf % (f'all_over_{div_area[-1]}', f_t, f_tp, f_p, f_mp, f_mr, f_map50, f_map), logger)
+#         print_log("-  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -", logger)
+#         # Print results per class
+#         if verbose and nc > 1 and len(stats):
+#             for i, c in enumerate(ap_class):
+#                 if c in names:
+#                     print_log(pf % (
+#                     names[c], nt[i, 0], pred_truth[i, 0], lev_np[i, 0], p[i, 0], r[i, 0], ap50[i, 0], ap[i, 0]), logger)
+#                     if isinstance(div_area, (list, tuple)):
+#                         for div_i in range(len(div_area) - 1):
+#                             print_log(pf % (f'{names[c]}_{div_area[div_i]}_to{div_area[div_i+1]}', nt[i, div_i + 1], pred_truth[i, div_i + 1],
+#                                             lev_np[i, div_i + 1], p[i, div_i + 1], r[i, div_i + 1], ap50[i, div_i + 1],
+#                                             ap[i, div_i + 1]), logger)
+#                         # for div_i, div_ang in enumerate(div_area):
+#                         #     print_log(pf % (f'{names[c]}_under_{div_ang}', nt[i, div_i + 1], pred_truth[i, div_i + 1],
+#                         #                     lev_np[i, div_i + 1], p[i, div_i + 1], r[i, div_i + 1], ap50[i, div_i + 1],
+#                         #                     ap[i, div_i + 1]), logger)
+#                         # print_log(pf % (
+#                         #     f'{names[c]}_over_{div_ang}', nt[i, -1], pred_truth[i, -1], lev_np[i, -1],
+#                         #     p[i, -1], r[i, -1], ap50[i, -1], ap[i, -1]), logger)
+#
+#     print_log("###---------------------------------------------------------###", logger)
+#     return mp, mr, map50, map, ap, ap_class, p, r
 def det_calculate(stats, div_area, nc, last_conf, save_dir, names, plots,verbose, logger):
-    s = ('%20s' + '%11s' * 7) % ('Class', 'Labels', 'R_num', 'P_num', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
-    p, r, mp, mr, map50, map =  0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-    ps, rs, pred_truths, lev_nps, ap, ap_class, nt = calcu_per_class(*stats, plot=plots, save_dir=save_dir, names=names,
+    conf_length = len(last_conf)
+    div_str = ['all_area']
+    if isinstance(div_area, (list, tuple)):
+        div_area = [0, *div_area, 'inf']
+        div_num = len(div_area)
+        for div_i in range(1, len(div_area)):
+            div_str.append(f'{div_area[div_i-1]}_to_{div_area[div_i]}')
+    else:
+        div_num = 1
+    lmp, lmr = np.zeros((conf_length, nc+1, div_num)), np.zeros((conf_length, nc+1, div_num))
+    lmap50, lmap = np.zeros((conf_length, nc+1, div_num)), np.zeros((conf_length, nc+1, div_num))
+    p, r  = 0.0, 0.0
+    s = ('%20s' + '%11s' * 10) % ('Class', 'Labels', 'R_num', 'P_num', 'P', 'R', 'curve_P', 'curve_R', 'F1', 'mAP@.5', 'mAP@.5:.95')
+
+    ps, rs, pred_truths, lev_nps, ap, ap_class, nt,  cur_prec, cur_rc,  cur_f1, f1_conf = calcu_per_class(*stats, plot=plots, save_dir=save_dir, names=names,
                                                                      conf_ts=last_conf)
+
+    print_log(f'###########################\nnow f1 conf thresh is {f1_conf} in div areas', logger)
+
     ap50, ap = ap[..., 0], ap.mean(2)  # AP@0.5, AP@0. 5:0.95
+
     for li, conf_t in enumerate(last_conf):
         p, r, pred_truth, lev_np = ps[li], rs[li], pred_truths[li], lev_nps[li]
         # Print results
         print_log(s, logger)
-        pf = '%20s' + '%11i' * 3 + '%11.3g' * 4  # print format
-        all_tp, all_p, all_t = pred_truth[:, 0].sum(), lev_np[:, 0].sum(), nt[:, 0].sum()
-
-        mp, mr = all_tp / max(all_p, 1e-16), all_tp / max(all_t, 1e-16)
-        map50, map = ap50[:, 0].mean(), ap[:, 0].mean()
-        print_log(pf % (f'all_conf_{conf_t}', all_t, all_tp, all_p, mp, mr, map50, map), logger)
+        pf = '%20s' + '%11i' * 3 + '%11.3g' * 7  # print format
         if isinstance(div_area, (list, tuple)):
-            for div_i, div_ang in enumerate(div_area):
-                f_t, f_tp, f_p = nt[..., div_i+1], pred_truth[..., div_i+1], lev_np[..., div_i+1]
-                f_map50, f_map = ap50[..., div_i+1], ap[..., div_i+1]
-                f_map50 = (f_map50 * f_p).sum() / max(f_p.sum(), 1e-16)
-                f_map = (f_map * f_p).sum() / max(f_p.sum(), 1e-16)
-                f_t, f_tp, f_p = f_t.sum(), f_tp.sum(), f_p.sum()
-                f_mp, f_mr = f_tp / max(f_p, 1e-16), f_tp / max(f_t, 1e-16)
-                print_log(pf % (f'all_under_{div_area[div_i]}', f_t, f_tp, f_p, f_mp, f_mr, f_map50, f_map), logger)
+            for div_i, div_s in enumerate(div_str):
+                all_cls_div_area_t, all_cls_div_area_tp, all_cls_div_area_p = nt[..., div_i], pred_truth[..., div_i], lev_np[..., div_i]  # label, pred true number, pred num
+                all_cls_div_area_t, all_cls_div_area_tp, all_cls_div_area_p = all_cls_div_area_t.sum(), all_cls_div_area_tp.sum(), all_cls_div_area_p.sum()
+                all_cls_div_area_mp, all_cls_div_area_mr = all_cls_div_area_tp / max(all_cls_div_area_p, 1e-16), all_cls_div_area_tp / max(all_cls_div_area_t, 1e-16)
+                all_cls_div_area_map50, all_cls_div_area_map = ap50[:, div_i].mean(), ap[:, div_i].mean()
+                lmp[li, 0, div_i], lmr[li, 0, div_i], lmap50[li, 0, div_i], lmap[
+                    li, 0, div_i] = all_cls_div_area_mp, all_cls_div_area_mr, all_cls_div_area_map50, all_cls_div_area_map
+                print_log(pf % (
+                f'all_conf_{conf_t}_{div_s}', all_cls_div_area_t, all_cls_div_area_tp, all_cls_div_area_p, all_cls_div_area_mp, all_cls_div_area_mr, cur_prec[0, div_i], cur_rc[0, div_i], cur_f1[0, div_i],
+                all_cls_div_area_map50, all_cls_div_area_map), logger)
 
-            f_t, f_tp, f_p = area_filter(nt, -1), area_filter(pred_truth, -1), area_filter(lev_np, -1)
-            f_map50, f_map = area_filter(ap50, -1), area_filter(ap, -1)
-            f_map50 = (f_map50 * f_p).sum() / max(f_p.sum(), 1e-16)
-            f_map = (f_map * f_p).sum() / max(f_p.sum(), 1e-16)
-            f_t, f_tp, f_p = f_t.sum(), f_tp.sum(), f_p.sum()
-            f_mp, f_mr = f_tp / max(f_p, 1e-16), f_tp / max(f_t, 1e-16)
-            print_log(pf % (f'all_over_{div_area[-1]}', f_t, f_tp, f_p, f_mp, f_mr, f_map50, f_map), logger)
-        print_log("-  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -", logger)
+        # all_tp, all_p, all_t = pred_truth[:, 0].sum(), lev_np[:, 0].sum(), nt[:, 0].sum()
+        # 
+        # mp, mr = all_tp / max(all_p, 1e-16), all_tp / max(all_t, 1e-16)
+        # map50, map = ap50[:, 0].mean(), ap[:, 0].mean()
+        # lmp[li, 0, 0], lmr[li, 0, 0], lmap50[li, 0, 0], lmap[li, 0, 0] = mp, mr, map50, map
+        # print_log(pf % (f'all_conf_{conf_t}', all_t, all_tp, all_p, mp, mr, cur_prec[0, 0], cur_rc[0, 0], cur_f1[0, 0], map50, map), logger)
+        # if isinstance(div_area, (list, tuple)):
+        #     for div_i, div_s in enumerate(div_str):
+        #         f_t, f_tp, f_p = nt[..., div_i], pred_truth[..., div_i], lev_np[..., div_i]  #label, pred true number, pred num
+        #         f_map50, f_map = ap50[..., div_i], ap[..., div_i]
+        #         # use map50 and true pred, we got recalled is {f_map50 * f_p}, all pred is {f_p}'  # ([2473.84777457,  276.11423903,  177.22878157,   64.59354685])
+        #         f_map50 = (f_map50 * f_p).sum() / max(f_p.sum(), 1e-16)
+        #         f_map = (f_map * f_p).sum() / max(f_p.sum(), 1e-16)
+        #         f_t, f_tp, f_p = f_t.sum(), f_tp.sum(), f_p.sum()
+        #         f_mp, f_mr = f_tp / max(f_p, 1e-16), f_tp / max(f_t, 1e-16)
+        #         lmp[li, 0, div_i], lmr[li, 0, div_i], lmap50[li, 0, div_i], lmap[li, 0, div_i] = f_mp, f_mr, f_map50, f_map
+        #         print_log(pf % (f'all_{div_s}', f_t, f_tp, f_p, f_mp, f_mr, cur_prec[0, div_i], cur_rc[0, div_i], cur_f1[0, div_i], f_map50, f_map), logger)
+
+        # if isinstance(div_area, (list, tuple)):
+        #     for div_i in range(1, len(div_area)):
+        #         f_t, f_tp, f_p = nt[..., div_i], pred_truth[..., div_i], lev_np[..., div_i]
+        #         f_map50, f_map = ap50[..., div_i], ap[..., div_i]
+        #         f_map50 = (f_map50 * f_p).sum() / max(f_p.sum(), 1e-16)
+        #         f_map = (f_map * f_p).sum() / max(f_p.sum(), 1e-16)
+        #         f_t, f_tp, f_p = f_t.sum(), f_tp.sum(), f_p.sum()
+        #         f_mp, f_mr = f_tp / max(f_p, 1e-16), f_tp / max(f_t, 1e-16)
+        #         lmp[li, 0, div_i], lmr[li, 0, div_i], lmap50[li, 0, div_i], lmap[li, 0, div_i] = f_mp, f_mr, f_map50, f_map
+        #         print_log(pf % (f'all_{div_area[div_i-1]}_to_{div_area[div_i]}', f_t, f_tp, f_p, f_mp, f_mr, cur_prec[0, div_i], cur_rc[0, div_i], cur_f1[0, div_i], f_map50, f_map), logger)
+
+            # f_t, f_tp, f_p = area_filter(nt, -1), area_filter(pred_truth, -1), area_filter(lev_np, -1)
+            # f_map50, f_map = area_filter(ap50, -1), area_filter(ap, -1)
+            # f_map50 = (f_map50 * f_p).sum() / max(f_p.sum(), 1e-16)
+            # f_map = (f_map * f_p).sum() / max(f_p.sum(), 1e-16)
+            # f_t, f_tp, f_p = f_t.sum(), f_tp.sum(), f_p.sum()
+            # f_mp, f_mr = f_tp / max(f_p, 1e-16), f_tp / max(f_t, 1e-16)
+            # print_log(pf % (f'all_over_{div_area[-1]}', f_t, f_tp, f_p, f_mp, f_mr, f_map50, f_map), logger)
+
         # Print results per class
         if verbose and nc > 1 and len(stats):
             for i, c in enumerate(ap_class):
                 if c in names:
-                    print_log(pf % (
-                    names[c], nt[i, 0], pred_truth[i, 0], lev_np[i, 0], p[i, 0], r[i, 0], ap50[i, 0], ap[i, 0]), logger)
-                    if isinstance(div_area, (list, tuple)):
-                        for div_i, div_ang in enumerate(div_area):
-                            print_log(pf % (f'{names[c]}_under_{div_ang}', nt[i, div_i + 1], pred_truth[i, div_i + 1],
-                                            lev_np[i, div_i + 1], p[i, div_i + 1], r[i, div_i + 1], ap50[i, div_i + 1],
-                                            ap[i, div_i + 1]), logger)
-                        print_log(pf % (
-                            f'{names[c]}_over_{div_ang}', nt[i, -1], pred_truth[i, -1], lev_np[i, -1],
-                            p[i, -1], r[i, -1], ap50[i, -1], ap[i, -1]), logger)
+                    for div_i, div_s in enumerate(div_str):
+                        lmp[li, i + 1, div_i], lmr[li, i + 1, div_i], lmap50[li, i + 1, div_i], lmap[li, i + 1, div_i] = p[i, div_i], r[i, div_i], ap50[i, div_i], ap[i, div_i]
+                        print_log(pf % (f'{names[c]}_{div_s}', nt[i, div_i], pred_truth[i, div_i],
+                                        lev_np[i, div_i], p[i, div_i], r[i, div_i], cur_prec[i, div_i], cur_rc[i, div_i], cur_f1[i, div_i], ap50[i, div_i],
+                                        ap[i, div_i]), logger)
 
-    print_log("###---------------------------------------------------------###", logger)
-    return mp, mr, map50, map, ap, ap_class, p, r
+        # if verbose and nc > 1 and len(stats):
+        #     for i, c in enumerate(ap_class):
+        #         if c in names:
+        #             lmp[li, i+1, 0], lmr[li, i+1, 0], lmap50[li, i+1, 0], lmap[li, i+1, 0] = p[i, 0], r[i, 0], ap50[i, 0], ap[i, 0]
+        #             print_log(pf % (
+        #             names[c], nt[i, 0], pred_truth[i, 0], lev_np[i, 0], p[i, 0], r[i, 0], cur_prec[i, 0], cur_rc[i, 0], cur_f1[i, 0], ap50[i, 0], ap[i, 0]), logger)
+        #             if isinstance(div_area, (list, tuple)):
+        #                 for div_i in range(1, len(div_area)):
+        #                     lmp[li, i + 1, div_i], lmr[li, i + 1, div_i], lmap50[li, i + 1, div_i], lmap[li, i + 1, div_i] = p[i, div_i], r[i, div_i], ap50[i, div_i], ap[i, div_i]
+        #                     print_log(pf % (f'{names[c]}_{div_area[div_i-1]}_to_{div_area[div_i]}', nt[i, div_i], pred_truth[i, div_i],
+        #                                     lev_np[i, div_i], p[i, div_i], r[i, div_i], cur_prec[i, div_i], cur_rc[i, div_i], cur_f1[i, div_i], ap50[i, div_i],
+        #                                     ap[i, div_i]), logger)
+        #                 # for div_i, div_ang in enumerate(div_area):
+        #                 #     print_log(pf % (f'{names[c]}_under_{div_ang}', nt[i, div_i + 1], pred_truth[i, div_i + 1],
+        #                 #                     lev_np[i, div_i + 1], p[i, div_i + 1], r[i, div_i + 1], ap50[i, div_i + 1],
+        #                 #                     ap[i, div_i + 1]), logger)
+        #                 # print_log(pf % (
+        #                 #     f'{names[c]}_over_{div_ang}', nt[i, -1], pred_truth[i, -1], lev_np[i, -1],
+        #                 #     p[i, -1], r[i, -1], ap50[i, -1], ap[i, -1]), logger)
+
+        print_log("###---------------------------------------------------------###", logger)
+    return lmp, lmr, lmap50, lmap, ap, ap_class, p, r
+
 
 def convert_small2big_json(jdict):
     for pic_info in jdict:

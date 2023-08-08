@@ -5,15 +5,13 @@ from pathlib import Path
 import cv2
 import math
 from copy import deepcopy
-from threading import Thread
+# from threading import Thread
 from concurrent import futures
 import numpy as np
 from tqdm import tqdm
-import xml.etree.ElementTree as ET
-import warnings
-from utils import  segments2boxes, segments2boxes_xyxy, print_log, xyxy2xywh, xyn2xy, clip_label, mkdir, xywh2xyxy
-from dataloader.data_utils import bbox_overlaps
-from functools import partial
+
+from utils import  segments2boxes, print_log, xyxy2xywh, xywh2xyxy, xyn2xy, clip_label, mkdir
+from dataloader.utils import bbox_overlaps
 
 
 # Parameters
@@ -64,11 +62,9 @@ def select_sample(paths, filter_str='', remove_str=None, sample=1, bg_gain=1, ob
         else:
             if rand_num <= sample:
                 files.append(f)
-    if len(files)==0:
-        files.append(f)
     return files
 
-def select_image(path, filter_str='', remove_str=None, sample=1, bg_gain=1, obj_gain=1):
+def select_image(path, filter_str='', remove_str=None,sample=1, bg_gain=1, obj_gain=1):
     paths = glob_file(path)
     paths = select_sample(paths, filter_str=filter_str, remove_str=remove_str, sample=sample, bg_gain=bg_gain, obj_gain=obj_gain)
     images = select_format(paths)
@@ -100,14 +96,9 @@ def img2seg_labels(img_paths, mask_suffix='.png'):
 def img2seg_label(img_path, mask_suffix='.png'):
     # Define label paths as a function of image paths
     sa, sb, sm = os.sep + 'images' + os.sep, os.sep + 'labels' + os.sep, os.sep + 'labels' + os.sep + 'masks' + os.sep
-    # parent = img_path.split('images')[0]
-    parent = img_path.rsplit(sa, 1)[0]
+    parent =  img_path.split('images')[0]
     if os.path.exists(parent+sb):
         label_path = sb.join(img_path.rsplit(sa, 1)).rsplit('.', 1)[0] + '.txt'
-        if not os.path.exists(label_path):
-            label_path = sb.join(img_path.rsplit(sa, 1)).rsplit('.', 1)[0] + '.xml'
-        if not os.path.exists(label_path):
-            label_path = sb.join(img_path.rsplit(sa, 1)).rsplit('.', 1)[0] + '.json'
     else:
         label_path = None
     if os.path.exists(parent+sm):
@@ -123,49 +114,47 @@ def img2npy(img_f):
     mkdir(str(npy_file.parent))
 
     if npy_file.exists():  # load npy
-        try:
-            im = np.load(npy_file)
-            # cv2.imwrite(img_f, im)
-            # gb = npy.stat().st_size
-        except Exception as e:
-            print(f'error in {npy_file}, error is {e}')
-            im = cv2.imread(img_f)  # BGR
-            np.save(npy_file, im)
+        im = np.load(npy_file)
+        # cv2.imwrite(img_f, im)
+        # gb = npy.stat().st_size
     else:  # read image
         im = cv2.imread(img_f)  # BGR
         np.save(npy_file, im)
         # gb = im.nbytes
     return  im
 
-def initial_result(img_f, img_size=(640,640)):
+def load_image_result(img_f, img_size=(640,640)):
     result = {}
+    if isinstance(img_f, str):
+        result['filename'] = img_f
+        # loads 1 image from dataset index 'i', returns im, original hw, resized hw
+
+        im = img2npy(img_f)  # BGR
+        assert im is not None, f'Image Not Found {img_f}'
+    else:
+        im = img_f
+        result['img'] = img_f
+
+    shape = im.shape[:2] # origin shape [height, width]
+    result['ori_shape'] = shape
+    # result['img_shape'] = shape
+    # result['ori_img'] = im
+    assert (shape[0] > 9) & (shape[1] > 9), f'image size {shape} <10 pixels'
+
     # result['img'] = im #deepcopy(im)
     result['img_size'] = img_size
     result['labels'] = None
     result['segment'] = None
     result['instance_segments'] = None
-    if isinstance(img_f, str):
-        result['filename'] = str(Path(img_f))
-    else:
-        im = img_f
-        result['img'] = img_f
-        result['filename'] = None
-        assert im is not None, f'Image Not Found {img_f}'
-        shape = im.shape[:2] # origin shape [height, width]
-        result['ori_shape'] = shape
-        # result['img_shape'] = shape
-        # result['ori_img'] = im
-        assert (shape[0] > 9) & (shape[1] > 9), f'image size {shape} <10 pixels'
-        del im  # not put in, avoid mp copy value and memory omm
-
+    del im  # not put in, avoid mp copy value and memory omm
     return result
 
 def load_results(img_paths, img_size=(640,640)):
     if len(img_paths)>5000:
         results = []
         with futures.ThreadPoolExecutor(NUM_THREADS) as executor:
-            res = executor.map(initial_result,img_paths)
-        pbar = tqdm(res, total=len(img_paths), bar_format='', desc='init results')
+            res = executor.map(load_image_result,img_paths)
+        pbar = tqdm(res, total=len(img_paths), bar_format='', desc='loading_images')
         for result in pbar:
             result['img_size'] = img_size
             results.append(result)
@@ -181,7 +170,7 @@ def load_results(img_paths, img_size=(640,640)):
         #         results.append(result)
         # return results
     else:
-        return [initial_result(img_f, img_size) for img_f in tqdm(img_paths, total=len(img_paths), bar_format='', desc='loading_images')]
+        return [load_image_result(img_f, img_size) for img_f in tqdm(img_paths, total=len(img_paths), bar_format='', desc='loading_images')]
 
 def read_image(result):
     if 'img' not in result.keys():
@@ -189,131 +178,10 @@ def read_image(result):
         # loads 1 image from dataset index 'i', returns im, original hw, resized hw
         im = img2npy(img_f)  # BGR
         result['img'] = im # BGR
-        assert im is not None, f'Image Not Found {img_f}'
-        shape = im.shape[:2]  # origin shape [height, width]
-        result['ori_shape'] = shape
-        # result['img_shape'] = shape
-        # result['ori_img'] = im
-        assert (shape[0] > 9) & (shape[1] > 9), f'image size {shape} <10 pixels'
-        del im  # not put in, avoid mp copy value and memory omm
 
-def get_yolotxt(label_file, select_class):
-    # l = []
-    # with open(label_file) as f:
-    #     l = [x.split() for x in f.read().strip().splitlines() if len(x)]
-    #     # select category we wanted:
-    #     if len(select_class):
-    #         l = [x for x in l if int(x[0]) in select_class]
-    #
-    #     if any([len(x) > 8 for x in l]):  # is segment
-    #         classes = np.array([x[0] for x in l], dtype=np.float32)
-    #         segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in l]  # (cls, xy1...)
-    #         l = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
-    segments = []
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
-        l =  np.loadtxt(label_file).reshape(-1, 5)
-        nl = len(l)
-        _, i = np.unique(l, axis=0, return_index=True)
-        if len(i) < nl:  # duplicate row check
-            print('duplicate labels', [{x: l[x]} for x in range(nl) if x not in i])
-            l = l[i]  # remove duplicates
-            np.savetxt(label_file, l, fmt='%d')
-    # select category we wanted:
-    if len(select_class):
-        try:
-            l = [x for x in l if int(x[0]) in select_class]
-        except:
-            print(l)
 
-    if any([len(x) > 8 for x in l]):  # is segment
-        classes = np.array([x[0] for x in l], dtype=np.float32)
-        segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in l]  # (cls, xy1...)
-        l = np.concatenate((classes.reshape(-1, 1), segments2boxes_xyxy(segments)), 1)  # (cls, xyxy)
-    l = np.array(l, dtype=np.float32)
-    if len(l):
-        assert l.shape[1] == 5, f'labels require 5 columns, {l.shape[1]} columns detected'
-        assert (l >= 0).all(), f'negative label values {l[l < 0]}'
-        # (l[:, 1:] <= 1).all(), 'label format should be (cls, xyxy), not normailized'
-        if (l[:, 1:] <= 1).all():
-            # xywh 2 xyxy
-            l[:, 1:] = xywh2xyxy(l[:, 1:], 832, 832)
-        #     # l[:, 1:] = xywh2xyxy(l[:, 1:], result['img_size'][1], result['img_size'][0])
-        # else:
-        #     l[:, 1:] = xywh2xyxy(l[:, 1:], 1, 1)
-        #     # print(f'non-normalized or out of bounds coordinates {l[:, 1:][l[:, 1:] > 1]}')
-    return l, segments
-
-def get_xml(xmlfile, classes=None):
-    object_axis = []
-    xml_class = []
-    in_file = open(xmlfile, encoding='utf-8')
-    tree = ET.parse(in_file)
-    root = tree.getroot()
-    # for child1 in root:
-    #     for child2 in child1:
-    #         if child2.tag == 'width':
-    #             width = child2.text
-    for size in root.iter('size'):
-        width = float(size.find('width').text)
-        height = float(size.find('height').text)
-    for obj in root.iter('object'):
-        try:
-            difficult = obj.find('difficult').text
-        except:
-            difficult = obj.find('Difficult').text
-        cls = obj.find('name').text.lower()
-        if classes is not None:
-            if cls not in classes:
-                continue
-        else:
-            xml_class.append(cls)
-        # if int(difficult) == 1:
-        #     continue
-        xmlbox = obj.find('bndbox')
-        box_trans = True
-        box_unspec = False
-        pose = obj.find('pose')
-        if pose is not None:
-            pose = pose.text
-            if pose=='FourSpot':
-                box_trans = False
-            elif pose=='Unspecified':
-                box_unspec = True
-
-        if box_unspec:
-            #assert xmlbox.find('x0') is not None, f'in {xmlfile} box is not identified'
-            if xmlbox.find('x0') is not None:
-                b = [float(xmlbox.find('x0').text), float(xmlbox.find('y0').text),
-                     float(xmlbox.find('x1').text), float(xmlbox.find('y2').text),
-                     cls, int(difficult)]
-            elif xmlbox.find('xmin') is not None:
-                b = [float(xmlbox.find('xmin').text), float(xmlbox.find('ymin').text),
-                     float(xmlbox.find('xmax').text),float(xmlbox.find('ymax').text),
-                     cls, int(difficult)]
-            else:
-                assert xmlbox.find('x0') is not None, f'in {xmlfile} box is not identified'
-
-        elif box_trans:
-            b = [float(xmlbox.find('xmin').text), float(xmlbox.find('ymin').text), float(xmlbox.find('xmax').text),
-                 float(xmlbox.find('ymax').text), cls, int(difficult)]
-        else:
-            b = [float(xmlbox.find('xmin').text.split('-')[0]), float(xmlbox.find('ymin').text.split('-')[0]), float(xmlbox.find('xmax').text.split('-')[0]),
-                 float(xmlbox.find('ymax').text.split('-')[0]), cls, int(difficult)]
-        object_axis.append(b)
-    # return (object_axis,xml_class) if classes is None else object_axis, height, width
-
-    if classes is None:
-        classes = xml_class
-    class_id = np.array([classes.index(x[4]) for x in object_axis], dtype=np.float32)
-    segments = [np.array(x[:4], dtype=np.float32).reshape(-1, 2) for x in object_axis]  # (cls, xy1...)
-
-    l = np.concatenate((class_id.reshape(-1, 1), np.array(segments).reshape(-1, 4)), 1)  # (cls, xywh)
-
-    return l, segments
-
-def load_label(result, select_class=(), prefix='', logger=None):
-    img_f = result['filename']
+def load_label(result, select_class=(), prefix='', logger=None, big_image=False):
+    img_f  = result['filename']
     label_file, seg_file = img2seg_label(img_f)  # labels
     if seg_file is not None:
         result['segment'] = cv2.imread(seg_file)
@@ -323,20 +191,42 @@ def load_label(result, select_class=(), prefix='', logger=None):
     # verify labels
     segments = []
     if os.path.isfile(label_file):
-        if '.json' in label_file:
-            print('json')
-        elif '.xml' in label_file:
-            l, segments = get_xml(label_file, select_class)
+        if big_image:
+            print('big')
         else:
-            l, segments = get_yolotxt(label_file, select_class)
-        l = np.array(l, dtype=np.float32)
+            with open(label_file) as f:
+                l = [x.split() for x in f.read().strip().splitlines() if len(x)]
+                # select category we wanted:
+                if len(select_class):
+                    l = [x for x in l if int(x[0]) in select_class]
+
+                if any([len(x) > 8 for x in l]):  # is segment
+                    classes = np.array([x[0] for x in l], dtype=np.float32)
+                    segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in l]  # (cls, xy1...)
+                    l = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
+                l = np.array(l, dtype=np.float32)
         nl = len(l)
         if nl:
+            # select category we wanted and sequence it from 0:
+            # if l.ndim>1:
+            for i, sc in enumerate(select_class):
+                # l[l[..., 0]==sc][..., 0] == i # this is false, cant change l
+                l[l[..., 0] == sc, 0] = i
+            assert l.shape[1] == 5, f'labels require 5 columns, {l.shape[1]} columns detected'
+            assert (l >= 0).all(), f'negative label values {l[l < 0]}'
+
+
+            if (l[:, 1:] <= 1).all():
+                # xywh 2 xyxy
+                l[:, 1:] = xywh2xyxy(l[:, 1:], result['ori_shape'][1], result['ori_shape'][0])
+                # l[:, 1:] = xywh2xyxy(l[:, 1:], result['img_size'][1], result['img_size'][0])
+            else:
+                print_log(f'non-normalized or out of bounds coordinates {l[:, 1:][l[:, 1:] > 1]}', logger)
             _, i = np.unique(l, axis=0, return_index=True)
             if len(i) < nl:  # duplicate row check
                 l = l[i]  # remove duplicates
                 if segments:
-                    segments = [segments[id] for id in i]
+                    segments = segments[i]
                 print_log(f'{prefix}WARNING: {img_f}: {nl - len(i)} duplicate labels removed', logger)
 
         else:
@@ -353,35 +243,28 @@ def load_label(result, select_class=(), prefix='', logger=None):
 
     return result
 
-def load_labels(results, select_class=(), prefix='',filter_bkg=False, logger=None):
-    # if len(results) > 5000:
-    #     load_func = partial(load_label,select_class=select_class, prefix=prefix, logger=logger)
-    #     n_rs = []
-    #     with futures.ThreadPoolExecutor(NUM_THREADS) as executor:
-    #         res = executor.map(load_func, results)
-    #         pbar = tqdm(res, total=len(results), bar_format='', desc='loading_labels')
-    #         for result in pbar:
-    #             n_rs.append(result)
-    #     results = n_rs
-    #     # it cost more in pool start and queue, eg:100s for 5400 labels, and only 2s without pool
-    # else:
-    #     results = [load_label(result, select_class=select_class, prefix=prefix, logger=logger) for result
-    #                in tqdm(results, total=len(results), bar_format='', desc='loading_labels')]
-
-    results = [load_label(result, select_class=select_class, prefix=prefix, logger=logger) for result in
-               tqdm(results, total=len(results), bar_format='', desc='loading_labels')]
+def load_labels(results, select_class=(), prefix='',filter_bkg=False, big_image=False, logger=None):
+    # n_rs = []
+    # with Pool(NUM_THREADS) as pool:
+    #     pbar = pool.imap(partial(load_label,select_class=select_class, prefix=prefix, logger=logger), results)
+    #     pbar = tqdm(pbar, total=len(results), bar_format='', desc='loading_labels')
+    #     for result in pbar:
+    #         n_rs.append(result)
+    # results = n_rs
+    # # it cost more in pool start and queue, eg:100s for 5400 labels, and only 2s without pool
+    results = [load_label(result, select_class=select_class, prefix=prefix, big_image=big_image, logger=logger) for result in tqdm(results, total=len(results), bar_format='', desc='loading_labels')]
     if filter_bkg:
         results = [result for result in results if len(result['labels'])]
 
     return results
 
-def rect_shape(results, img_size, batch_size, pad=0, stride=0):
+def rect_shape(results, pad, stride, batch_size):
+    img_size = results[0]['img_size']
     bi = np.floor(np.arange(len(results)) / batch_size).astype(np.int8)  # batch index  #[0,0,0,...,1,1,1,..,bs]
     nb = bi[-1] + 1  # number of batches
 
-    [read_image(result) for result in results]
-    s = np.array([list(result['ori_shape']) for result in results]) # h,w   (hs/h) /(ws/w)
-    ar = s[:, 0] / s[:, 1]  # aspect ratio  # h/w
+    s = np.array([list(result['ori_shape']) for result in results]) # w,h   (hs/h) /(ws/w)
+    ar = s[:, 0] / s[:, 1]  # aspect ratio
     irect = ar.argsort()
     results = [results[i] for i in irect]
 
@@ -391,28 +274,18 @@ def rect_shape(results, img_size, batch_size, pad=0, stride=0):
     for i in range(nb):
         ari = ar[bi == i]
         mini, maxi = ari.min(), ari.max()
-
-        # 将不规则的图形，规则为正方形状， 如 （600，400） 通过上下补黑边，将输入图像转为（600，600）， 其中batch shape 的（600,600） 在此处计算得出
         # now ar is h/w
-        # if maxi < 1:  # h < w
-        #     shapes[i] = [1 / maxi * img_size[0], 1 / maxi * img_size[0]]  # w*h/ws
-        # elif mini > 1:  # w > h
-        #     shapes[i] = [mini * img_size[1], mini * img_size[1]]  # h*ws/w
-        # else:
-        #     shapes[i] = [min(img_size), min(img_size)]
-
-        # 将每一批次中的图片规则为相同resize 大小，如有两张 原图大小[（1000，500）,(2000,500)]，计算ar=[2, 4],将所有图片等比例缩放为
-        if maxi < 1:
-            shapes[i] = [maxi*img_size[1], img_size[1]]  # (w/h,1)
-        elif mini > 1:
-            shapes[i] =   [img_size[0], img_size[0] / mini]  # (1,h/w)
+        if maxi < 1:  # h < w
+            shapes[i] = [1 / maxi * img_size[0], 1 / maxi * img_size[0]]  # w*h/ws
+        elif mini > 1:  # w > h
+            shapes[i] = [mini * img_size[1], mini * img_size[1]]  # h*ws/w
         else:
-            shapes[i] = [max(img_size), max(img_size)]
-
+            shapes[i] = [min(img_size), min(img_size)]
     batch_shapes = np.ceil(np.array(shapes) / stride + pad).astype(np.int32) * stride
     for i, result in enumerate(results):
-        result['rect_shape'] = batch_shapes[bi[i]]   # 输出h,w
+        result['rect_shape'] = batch_shapes[bi[i]]
         result['rectangle_stride'] = stride
+    return results
 
 def check_label(result, func):
     if result['labels'] is not None:
@@ -599,24 +472,16 @@ def load_mosaics(results, num=10, more_add=4):
 #     new_result['instance_segments'] = segments_all if segments_all else None
 #     return  new_result
 
-
-def filter_fix(labels, pix_thres=1):
-    # filter fix
-    labels_area = xyxy2xywh(labels[..., 1:])
-    idx = np.where(np.logical_and(labels_area[..., 2] >= pix_thres, labels_area[..., 3] >= pix_thres))
-    return labels[idx], labels_area[idx]
-
-
-def crop2merge(img, crop_w, crop_h, merged_bx1, merged_by1,  labels=None, instance_segment=None, iou_thres=0.4, pix_thres=1,
-               crop_obj=True, max_obj_center=True, select_idx=None, crop_from=None):
+def crop2merge(img, crop_w, crop_h, bx1, by1,  labels=None, instance_segment=None, iou_thres=0.4, pix_thres=8,
+               crop_obj=True, max_obj_center=True, select_idx=None):
     """
     crop image array of shape(crop_w, crop_h) and transform labels to the axis of new image, used in mosaic and crop from big image
     the crop style is around the labels.
     :param img:  the image cropped from
     :param crop_w: crop width
     :param crop_h: crop height
-    :param merged_bx1: axis x1 of merged image,
-    :param merged_by1: axis y1 of merged image,
+    :param bx1: axis x1 of merged image
+    :param by1: axis y1 of merged image
     :param labels: labels of crop image
     :param instance_segment: instance labels mask
     :param iou_thres: iou_thres used in the label transform
@@ -627,18 +492,11 @@ def crop2merge(img, crop_w, crop_h, merged_bx1, merged_by1,  labels=None, instan
     :return:
     """
     c_img_h, c_img_w = img.shape[:2]
-    # if c_img_w < crop_w, it will raise error
-
-    if crop_from is None:
-        new_pic_x = random.randint(0, c_img_w - crop_w)
-        new_pic_y = random.randint(0, c_img_h - crop_h)
-    else:
-        new_pic_y, new_pic_x = crop_from
-
+    new_pic_x = random.randint(0, c_img_w - crop_w)
+    new_pic_y = random.randint(0, c_img_h - crop_h)
     # Labels
     if labels is not None:
-        labels, labels_area = filter_fix(labels)
-
+        labels_area = xyxy2xywh(labels[..., 1:])
         # if child image has labels, we should copy the image segment with labels
         if len(labels) and crop_obj:
             if select_idx is None:
@@ -653,19 +511,13 @@ def crop2merge(img, crop_w, crop_h, merged_bx1, merged_by1,  labels=None, instan
                     select_idx = random.choice(range(len(labels)))
             c_x = min(labels_area[select_idx, 0], c_img_w - crop_w)
             c_y = min(labels_area[select_idx, 1], c_img_h - crop_h)
-            # new_pic_x = max(0, int(c_x) - random.randint(0, c_img_w - crop_w))
-            # new_pic_y = max(0, int(c_y) - random.randint(0, c_img_h - crop_h))
-            # new_pic_x = max(0, int(c_x) - random.randint(0, crop_w))
-            # new_pic_y = max(0, int(c_y) - random.randint(0, crop_h))
-            # new_pic_x = max(0, int(c_x) - random.randint(pix_thres, crop_w-pix_thres))
-            # new_pic_y = max(0, int(c_y) - random.randint(pix_thres, crop_h-pix_thres))
-            new_pic_x = max(0, int(c_x) - random.randint(int(crop_w/4), int(crop_w/4*3)))
-            new_pic_y = max(0, int(c_y) - random.randint(int(crop_h/4), int(crop_h/4*3)))
+            new_pic_x = max(0, int(c_x) - random.randint(0, c_img_w - crop_w))
+            new_pic_y = max(0, int(c_y) - random.randint(0, c_img_h - crop_h))
 
         if instance_segment is not None:
-            instance_segment = [xyn2xy(x, 1, 1, merged_bx1 - new_pic_x, merged_by1 - new_pic_y) for x in instance_segment]
+            instance_segment = [xyn2xy(x, 1, 1, bx1 - new_pic_x, by1 - new_pic_y) for x in instance_segment]
             for x in instance_segment:
-                clip_label(x, merged_bx1 + crop_w, merged_by1 + crop_h, merged_bx1, merged_by1)
+                clip_label(x, bx1 + crop_w, by1 + crop_h, bx1, by1)
             if len(instance_segment):
                 boxes = segments2boxes(instance_segment)
                 area = boxes[:, 2] * boxes[:, 3]
@@ -675,15 +527,13 @@ def crop2merge(img, crop_w, crop_h, merged_bx1, merged_by1,  labels=None, instan
             area = bbox_overlaps(labels[:, 1:],
                                  np.array([[new_pic_x, new_pic_y, new_pic_x + crop_w, new_pic_y + crop_h]]))
         if area is not None:
-            if (labels_area[:,2:]==0).any():
-                print('0 in labels area', labels_area)
             iou = area / (labels_area[:, 2] * labels_area[:, 3])
             idx = np.where(np.logical_and(iou >= iou_thres, area >= pix_thres * pix_thres))
             # idx = np.where(iou >= 0.4)[0]
             labels = labels[idx]
-            labels[:, 1:] = xyn2xy(labels[:, 1:], 1, 1, merged_bx1 - new_pic_x,
-                                   merged_by1 - new_pic_y)  # normalized xyxy to pixel xyxy format
-            clip_label(labels[:, 1:], merged_bx1 + crop_w, merged_by1 + crop_h, merged_bx1, merged_by1)
+            labels[:, 1:] = xyn2xy(labels[:, 1:], 1, 1, bx1 - new_pic_x,
+                                   by1 - new_pic_y)  # normalized xyxy to pixel xyxy format
+            clip_label(labels[:, 1:], bx1 + crop_w, by1 + crop_h, bx1, by1)
             if instance_segment is not None:
                 instance_segment = [instance_segment[int(i)] for i in idx[0]]
                 assert len(labels)==len(instance_segment), 'cropped labels and seg num not equal'
@@ -765,120 +615,36 @@ def load_mosaic(results, indice=None, more_add=6):
     new_result['instance_segments'] = segments_all if segments_all else None
     return  new_result
 
-def load_big2_small(result, cropped_imgsz, crop_dir='crop', obj_repeat=2, bg_repeat=2, iou_thres=0.4, pix_thres=1, save_crop=True,slide_crop=False):
-    crop_h, crop_w = cropped_imgsz
+def load_big2_small(big_result, cropped_imgsz, pic_repeat=3, iou_thres=0.4, pix_thres=20):
+    crop_w, crop_h = cropped_imgsz
     small_results = []
-    # result = deepcopy(big_result)
+    result = deepcopy(big_result)
     read_image(result)
-    img = result['img']
+    img =  result['img']
     instance_segment = result['instance_segments']
     labels = result['labels']
+    file_stem, file_suffix = result['filename'].split(".")
     if instance_segment is not None:
         assert len(labels) == len(instance_segment), "origin labels and segment is not equal"
+    for _ in range(pic_repeat):
+        for idx in range(len(labels)):
+            c_axis, obj_labels, obj_instance_seg = crop2merge(img, crop_w, crop_h, 0, 0,  labels=labels,
+                                                              instance_segment=instance_segment, iou_thres=iou_thres,
+                                                              pix_thres=pix_thres, crop_obj=True, max_obj_center=False,
+                                                              select_idx=idx)
+            obj_f = file_stem + f'_{c_axis[0]}_{c_axis[2]}_{c_axis[1]}_{c_axis[3]}.{file_suffix}'
+            obj_img = img[c_axis[1]:c_axis[3], c_axis[0]:c_axis[3]]
+            obj_result = {'file_name':obj_f, 'axis': c_axis, 'ori_shape':(crop_h, crop_w), 'segment': None,
+                          'labels': obj_labels, 'instance_segments': obj_instance_seg, 'img': obj_img }
+            small_results.append(obj_result)
 
-    # if c_img_w < crop_w, it will raise error
-    c_img_h, c_img_w = img.shape[:2]
-    crop_h = min(c_img_h, crop_h)
-    crop_w = min(c_img_w, crop_w)
-    if slide_crop:
-        crop_from = [-crop_h,  -crop_w]
-        for _ in range(100):
-            crop_from[0] = min(crop_from[0] + crop_h, c_img_h - crop_h)
-
-            for _ in range(100):
-                crop_from[1] = min(crop_from[1] + crop_w, c_img_w - crop_w)
-
-                bg_result = small_crop_result(result, save_crop, crop_dir, crop_w, crop_h, 0, 0, iou_thres, pix_thres,
-                                              crop_from,
-                                              crop_obj=False, max_obj_center=False, select_idx=None)
-
-                small_results.append(bg_result)
-                if crop_from[1] >= c_img_w - crop_w:
-                    crop_from[1] = -crop_w
-                    break
-                    
-            if crop_from[0] >= c_img_h-crop_h:
-                break
-
-    else:
-        for _ in range(obj_repeat):
-            for idx in range(len(labels)):
-                obj_result = small_crop_result(result, save_crop, crop_dir, crop_w, crop_h, 0, 0, iou_thres, pix_thres,
-                                   crop_obj=True, max_obj_center=False, select_idx=idx)
-                small_results.append(obj_result)
-
-        for _ in range(bg_repeat*len(labels)):
-            bg_result = small_crop_result(result, save_crop, crop_dir, crop_w, crop_h, 0, 0, iou_thres, pix_thres,
-                                           crop_obj=False, max_obj_center=False, select_idx=None)
+            bg_axis, bg_labels, bg_instance_seg = crop2merge(img, crop_w, crop_h, 0, 0,  labels=labels,
+                                                              instance_segment=instance_segment, iou_thres=iou_thres,
+                                                              pix_thres=pix_thres, crop_obj=False, max_obj_center=False,
+                                                              select_idx=None)
+            bg_f = file_stem + f'_{bg_axis[0]}_{bg_axis[2]}_{bg_axis[1]}_{bg_axis[3]}.{file_suffix}'
+            bg_img = img[bg_axis[1]:bg_axis[3], bg_axis[0]:bg_axis[3]]
+            bg_result = {'file_name':bg_f, 'axis': bg_axis, 'ori_shape':(crop_h, crop_w), 'segment': None,
+                          'labels': bg_labels, 'instance_segments': bg_instance_seg, 'img': bg_img }
             small_results.append(bg_result)
-    del result
     return  small_results
-
-def small_crop_result(result, save_crop, save_dir_name, crop_w, crop_h, bx, by, iou_thres, pix_thres, crop_from=None, crop_obj=False, max_obj_center=False, select_idx=None):
-    img = result['img']
-    im_f = result['filename']
-    instance_segment = deepcopy(result['instance_segments'])
-    labels = deepcopy(result['labels'])
-    segment = result['segment']
-
-    bg_axis, bg_labels, bg_instance_seg = crop2merge(img, crop_w, crop_h, bx, by, labels=labels,
-                                                     instance_segment=instance_segment, iou_thres=iou_thres,
-                                                     pix_thres=pix_thres, crop_obj=crop_obj, max_obj_center=max_obj_center,
-                                                     select_idx=select_idx, crop_from=crop_from)
-    bg_img = img[bg_axis[1]:bg_axis[3], bg_axis[0]:bg_axis[2]]
-    if segment is not None:
-        bg_seg = segment[bg_axis[1]:bg_axis[3], bg_axis[0]:bg_axis[2]]
-    else:
-        bg_seg = None
-
-    if im_f is not None:
-        file_p, file_stem, file_suffix = Path(im_f).parents[1], Path(im_f).stem, Path(im_f).suffix
-        bg_name = f'{file_stem}-{bg_axis[0]}_{bg_axis[2]}_{bg_axis[1]}_{bg_axis[3]}{file_suffix}'
-        save_name = str(file_p / save_dir_name / bg_name)
-        if save_crop:
-            Thread(target=save_img_label, args=(save_name, bg_img, file_suffix, bg_labels),
-                   daemon=False).start()
-    else:
-        save_name = None
-
-    bg_result = {'filename': save_name, 'axis': bg_axis, 'ori_shape': (crop_h, crop_w), 'img_size': result['img_size'],
-                 'segment': bg_seg,
-                 'labels': bg_labels, 'instance_segments': bg_instance_seg, 'img': bg_img}
-
-    return bg_result
-
-def save_img_label(save_name, bg_img, file_suffix, bg_labels):
-    mkdir(save_name)
-    if not Path(save_name).exists():
-        cv2.imwrite(save_name, bg_img)
-    label_name = save_name.replace('images', 'labels').replace(file_suffix, '.txt')
-    mkdir(label_name)
-    np.savetxt(label_name, bg_labels, fmt='%d')
-
-def autosplit(path='../datasets/coco128/images', weights=(0.9, 0.1, 0.0), annotated_only=False):
-    """ Autosplit a dataset into train/val/test splits and save path/autosplit_*.txt files
-    Usage: from utils.datasets import *; autosplit()
-    Arguments
-        path:            Path to images directory
-        weights:         Train, val, test weights (list, tuple)
-        annotated_only:  Only use images with an annotated txt file
-    """
-    path = Path(path)  # images dir
-    files = sorted(x for x in path.rglob('*.*') if x.suffix[1:].lower() in IMG_FORMATS)  # image files only
-    n = len(files)  # number of files
-    random.seed(0)  # for reproducibility
-    indices = random.choices([0, 1, 2], weights=weights, k=n)  # assign each image to a split
-
-    txt = ['autosplit_train.txt', 'autosplit_val.txt', 'autosplit_test.txt']  # 3 txt files
-    [(path.parent / x).unlink(missing_ok=True) for x in txt]  # remove existing
-
-    print(f'Autosplitting images from {path}' + ', using *.txt labeled images only' * annotated_only)
-    for i, img in tqdm(zip(indices, files), total=n):
-        if not annotated_only or Path(img2seg_label(str(img))[0]).exists():  # check label
-            with open(path.parent / txt[i], 'a') as f:
-                f.write('./' + img.relative_to(path.parent).as_posix() + '\n')  # add image to txt file
-
-# if __name__ == '__main__':
-#     img_f =  '../../data/visdrone/images/train/0000140_00118_d_0000002.jpg'
-#     result = initial_result(img_f)
-#     load_label(result, select_class=(3, 4, 5, 8))

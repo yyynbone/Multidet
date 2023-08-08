@@ -1,0 +1,29 @@
+weights:  results/train/drone/yolov8s/exp/weights/best.pt # None #../ultralytics/state_dict/pretrained_yolov8s_visdrone_best.pt
+cfg: yolov8s.yaml
+data: drone.yaml
+data_prefile: data_preprocess.yaml
+hyp: hyp_v8.yaml
+batch_size: 64 # for 640*640 64
+bgr: 1
+conf_thresh: 0.1
+last_conf: 0.3
+verbose: True
+visual_matched: False
+
+div_area:
+- 4
+- 20
+- 50
+epochs: 500
+patience: 300
+rect: false
+device: 0,1,2,3
+world_size: 4
+loss: LossV8
+loss_supervision: 100
+
+imgsz: 480
+iof_nms: False
+iouv: [0.5, 0.95]
+
+

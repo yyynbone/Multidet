@@ -165,6 +165,15 @@ def train_val_split(all_dataset, split_weights=(0.8, 0.2, 0), seed=0, save_dir=N
             print('save to', Path(save_dir) / f'{save_d}.txt')
     return t_v_dataset
 
+def rand_choice(n, p):
+    selected = []
+    indices = random.choices([0, 1], weights=(1 - p, p), k=n)
+    for i, f in zip(indices, range(n)):
+        if i:
+            selected.append(f)
+    return selected
+
+
 def select():
     import random
     import shutil
@@ -206,7 +215,10 @@ def get_dataset(path, pre_process, img_size=640, logger=None, image_weights=Fals
     # except Exception as e:
     #     print_log(f'{prefix}WARNING: Cache directory {path.parent} is not writeable: {e}', logger)  # not writeable
 
+
     if pre_process.get('label', False):
+        # pre_process["pad"] = pre_process['label']["pad"]
+        # pre_process["stride"] = pre_process['label']["stride"]
         results = load_labels(results, select_class=select_class, prefix=prefix, filter_bkg=filter_bkg, logger=logger)
         if single_cls:
             for result in results:
@@ -217,8 +229,7 @@ def get_dataset(path, pre_process, img_size=640, logger=None, image_weights=Fals
     pre_process['img_size'] = img_size
     pre_process['mosaic'] = pre_process.get('mosaic', 0.3) if augment and not rect else 0 # load 4 images at a time into a mosaic (only during training)
     pre_process["gray"] = not bgr
-    pre_process["pad"] = pad
-    pre_process["stride"] = stride
+
     for r in results:
         r['select_class'] = select_class
     return results, pre_process
@@ -291,7 +302,8 @@ class LoadImagesAndLabels(Dataset):
             self.obj_index = np.where(label_num > 0)[0]
             self.bkg_index = np.where(label_num == 0)[0]
             if self.pre_process['rect']:
-                rect_shape(self.results, self.imgsz, self.pre_process['pad'], self.pre_process['stride'], self.batch_size)
+                rect_shape(self.results, self.imgsz, self.batch_size,  **self.pre_process['label'])
+                # 这是根据固定[0,1,2...]这个index计算每个批次图片的最佳shape, index shuffle 变化后，会报错，需要重新计算
 
     def rm_result_img(self):
         for result in self.results:
@@ -328,6 +340,7 @@ class LoadImagesAndLabels(Dataset):
         img = trans_result['img']
         img = img.transpose((2, 0, 1))  # HWC to CHW
         img = np.ascontiguousarray(img[::-1])  # BGR to RGB
+        img = img.astype(np.float32)  / 255.  # uint8 to float32, 0-255 to 0.0-1.0
         return img, labels, class_label, trans_result
 
     def crop2small(self):
@@ -359,9 +372,11 @@ class LoadImagesAndLabels(Dataset):
                 if self.slide_crop:
                     crop_use = deepcopy(self.origin_results)
                 else:
-                    select_idx = random.choices(range(len(self.origin_results)),
-                                                  k=int(len(self.origin_results) * self.origin_portion))  # rand weighted idx
-                    crop_use = [self.origin_results[i] for i in select_idx]
+                    crop_use = rand_choice(len(self.origin_results), self.origin_portion)
+
+                    # select_idx = random.choices(range(len(self.origin_results)),
+                    #                               k=int(len(self.origin_results) * self.origin_portion))  # rand weighted idx
+                    # crop_use = [self.origin_results[i] for i in select_idx]
                 for result in tqdm(crop_use, total=len(crop_use), bar_format='', desc=f'crop big picture to {crop_dir}'):
                     cropped_results = load_big2_small(result, self.cropped_imgsz, crop_dir, obj_repeat,  bg_repeat, iou_thres, pix_thres, slide_crop=self.slide_crop)
                     # print(f"{result['filename']} cropped done,{list(result.keys())} crop images {len(cropped_results)}")
@@ -387,10 +402,14 @@ class LoadImagesAndLabels(Dataset):
 
     def index_shuffle(self):
         self.crop2small()
-        self.indices = np.arange(len(self.results))
+        # self.indices = np.arange(len(self.results))
         # select sample randomly
         # print(f'now we select sample {self.portion} in {self.rank}')
-        self.indices = random.choices(range(len(self.indices)), k=int(len(self.indices)*self.portion))  # rand weighted idx
+        # self.indices = random.choices(range(len(self.indices)), k=int(len(self.indices)*self.portion))  # rand weighted idx
+        # assert len(self.indices) == len(set(list(self.indices))), 'indices dumplicated after random choices'
+
+        self.indices = np.array(rand_choice(len(self.results), self.portion))
+
         if self.bkg_ratio:
             indices = self.obj_index
             obj_num = len(indices)
@@ -470,7 +489,7 @@ class LoadImagesAndLabels(Dataset):
 
 class LoadImages(LoadImagesAndLabels):
     def __init__(self, path, img_size=640, stride=32, auto=True, is_bgr=True, slide_crop=None, resize=None):
-        pre_process = {'transform': {"resize": None,'adapt_pad':{'auto':auto, 'rectangle_stride': stride}} }
+        pre_process = {'transform': {"resize": {'pad': False} }}
         self.gray = not is_bgr
         if isinstance(img_size, int):
             img_size = (img_size, img_size)  # h, w
@@ -570,8 +589,11 @@ class LoadImages(LoadImagesAndLabels):
         if self.slide_crop is not None:
             device, l_shape = pred.device, pred.shape[-1]
             bxy = torch.tensor(self.crop_axis)[:, None, :2]  # (bs, 1, 2)
-            gain = min(self.img_size[0] / self.slide_crop[0], self.img_size[1] / self.slide_crop[1])
-            pred[..., :4] /= gain
+
+            pred[..., 0:4:2] /= self.img_size[1] / self.slide_crop[1]
+            pred[..., 1:4:2] /= self.img_size[0] / self.slide_crop[0]
+            # gain = min(self.img_size[0] / self.slide_crop[0], self.img_size[1] / self.slide_crop[1])
+            # pred[..., :4] /= gain
             pred[:, :, :2] += bxy.to(device)
             pred = pred.reshape(1, -1, l_shape)
             img = img0.transpose((2, 0, 1))  # HWC to CHW

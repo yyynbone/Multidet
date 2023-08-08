@@ -1,5 +1,5 @@
 import torch.nn as nn
-from models.layers.common_layer import SeBlock
+from models.layers.attention_layer import SeBlock
 
 #-------------------------------------------------------------------------
 # Mobilenetv3Small

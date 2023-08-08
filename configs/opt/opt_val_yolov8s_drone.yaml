@@ -1,0 +1,24 @@
+weights:
+  - ../ultralytics/state_dict/pretrained_yolov8s_visdrone_best.pt
+  - results/train/drone/yolov8s/exp/weights/best.pt
+  - results/train/drone/yolov8s/exp2/weights/best.pt
+cfg: yolov8s.yaml
+data: drone_val.yaml
+data_prefile: data_preprocess.yaml
+batch_size: 64 # for 640*640 64
+bgr: 1
+last_conf: [0.1, 0.2, 0.3]
+verbose: True
+visual_matched: True
+save_txt: True
+save_conf: True
+save_json: True
+imgsz: [270, 480]
+iof_nms: False
+iouv: [0.5, 0.95]
+div_area:
+- 4
+- 20
+- 50
+compute_loss: LossV8
+val_sample_portion: 0.1

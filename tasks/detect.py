@@ -13,6 +13,7 @@ Usage:
 
 import argparse
 from pathlib import Path
+import os
 import cv2
 import torch
 import torch.backends.cudnn as cudnn
@@ -132,7 +133,7 @@ def run(weights='checkpoints/zjs_s16.pt',  # model.pt path(s)
         #     show_pre_process = True
         im = torch.from_numpy(im).to(device)
         im = im.half() if half else im.float()  # uint8 to fp16/32
-        im /= 255  # 0 - 255 to 0.0 - 1.0
+        # im /= 255  # 0 - 255 to 0.0 - 1.0
         # im = torch.tensor(im, dtype=torch.float32,device=device)
         if len(im.shape) == 3:
             im = im[None]  # expand for batch dim
@@ -190,7 +191,8 @@ def run(weights='checkpoints/zjs_s16.pt',  # model.pt path(s)
                 p = Path(p)  # to Path
                 save_path = str(save_dir / p.name)  # im.jpg
                 txt_path = str(save_dir / 'labels' / p.stem) + ('' if dataset.mode == 'image' else f'_{frame}')  # im.txt
-                s += '%gx%g ' % im.shape[2:]  # print string
+                # s += '%gx%g ' % im.shape[2:]  # print string
+                s += '%gx%g ' % im0.shape[:2]  # print string
                 gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
                 imc = im0.copy() if save_crop else im0  # for save_crop
                 annotator = Annotator(im0, line_width=line_thickness, example=str(names))
@@ -264,21 +266,27 @@ def run(weights='checkpoints/zjs_s16.pt',  # model.pt path(s)
 
 def parse_opt():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default= 'checkpoints/zjs_v5s_pretrained.pt', help='model path(s)')
-    # results/train/drone/zjdet_v8s_afree/exp2/weights/best.pt
-    # results/train/drone/zjdet_v8/exp/weights/best.pt
-    # results/train/drone/zjdet_neck/exp/weights/best.pt
-    # checkpoints/zjs_v5s_pretrained.pt
-    # results/train/drone/yolov5s/exp/weights/best.pt
-    parser.add_argument('--cfg', default=None, help='model yaml path(s)')
-    parser.add_argument('--source', type=str, default= '../data/visdrone/video.mp4', help='file/dir/URL/glob, 0 for webcam')
-    # parser.add_argument('--source', type=str, default='../data/visdrone/images/train/9999938_00000_d_0000435.jpg',
+    # parser.add_argument('--weights', type=str, default= 'results/train/drone/yolov8s/exp2/weights/best.pt', help='model path(s)')
+    #
+    # # results/train/drone/zjdet_unet/exp3/weights/best.pt
+    # # results/train/drone/zjdet_v8s_afree/exp2/weights/best.pt
+    # # results/train/drone/zjdet_v8/exp/weights/best.pt
+    # # results/train/drone/zjdet_neck/exp/weights/best.pt
+    # # checkpoints/zjs_v5s_pretrained.pt
+    # # results/train/drone/yolov5s/exp/weights/best.pt
+    # parser.add_argument('--cfg', default=None, help='model yaml path(s)')
+
+    parser.add_argument('--weights', type=str, default='../ultralytics/state_dict/pretrained_yolov8s_visdrone_best.pt',
+                        help='model path(s)')
+    parser.add_argument('--cfg', default='yolov8s.yaml', help='model yaml path(s)')
+    parser.add_argument('--source', type=str, default= '../data/visdrone/video2.mp4', help='file/dir/URL/glob, 0 for webcam')
+    # parser.add_argument('--source', type=str, default='../data/visdrone/images/train/9999938_00000_d_0000059.jpg',
     #                     help='file/dir/URL/glob, 0 for webcam')
     # parser.add_argument('--resize', default=[544, 960], help='slide crop a big picture or not')
     # parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[544, 960],
     #                     help='inference size h,w')
-    # parser.add_argument('--crop-imgsz', default=[540, 960], help='slide crop a big picture or not')
-    parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[540, 960],
+    parser.add_argument('--crop-imgsz', default=[270, 480], help='slide crop a big picture or not')
+    parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[270, 480], #[270, 480]
                         help='inference size h,w')
     parser.add_argument('--conf-thres', type=float, default=0.25, help='confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.45, help='NMS IoU threshold')
@@ -321,7 +329,8 @@ def main(opt):
 
     # Directories
     if 'weights' == opt.weights.split('/')[-2]:
-        weight_file_name = '_'.join(opt.weights.split('/')[-4:-2]) + '_'
+        # weight_file_name = '_'.join(opt.weights.split('/')[-4:-2]) + '_'
+        weight_file_name = os.sep.join(opt.weights.split('/')[-5:-2]) + os.sep
     else:
         weight_file_name = ''
     weight_file_name += str(Path(opt.weights).stem)

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from glob import glob
 from torch.utils.data import DataLoader
+import torch.distributed as dist
 
 from utils import ROOT
 from models import attempt_load
@@ -15,6 +16,7 @@ from tasks import val
 
 from utils import ( set_logging, check_dataset, check_yaml, load_args, increment_path, select_device, print_args,print_log, select_class_tuple)
 FILE = Path(__file__).resolve()
+
 
 def parse_opt():
     parser = argparse.ArgumentParser()
@@ -59,7 +61,10 @@ def parse_opt():
 
 
 def main(opt):
-
+    local_rank = int(os.environ['LOCAL_RANK'])
+    torch.cuda.set_device(local_rank)
+    device = torch.device('cuda', local_rank)
+    dist.init_process_group(backend="nccl" if dist.is_nccl_available() else "gloo")
     # Data
     data_file = Path(opt.data).stem
     opt.data = check_dataset(opt.data)  # check
@@ -88,7 +93,10 @@ def main(opt):
     all_save_dir = increment_path(Path(opt.project) / data_file  / opt.name,
                                   exist_ok=opt.exist_ok)  # increment run
     all_save_dir.mkdir(parents=True, exist_ok=True)  # make dir
-    opt.logger = set_logging(name=FILE.stem, filename=Path(Path(all_save_dir) / 'val.log'))
+    if local_rank in [-1, 0]:
+        opt.logger = set_logging(name=FILE.stem, filename=Path(Path(all_save_dir) / 'val.log'), rank=local_rank)
+    else:
+        opt.logger = None
 
     print_args(FILE.stem, opt, logger=opt.logger)
     stride = 32
@@ -111,6 +119,7 @@ def main(opt):
         dataset = LoadImagesAndLabels(data_pre,
                                       task_data,
                                       batch_size=opt.batch_size,
+                                      local_rank=local_rank,
                                       logger=opt.logger,
                                       bkg_ratio=getattr(opt, "bkg_ratio", 0),
                                       obj_mask=getattr(opt,"val_obj_mask", 0),
@@ -121,17 +130,18 @@ def main(opt):
                                       )
 
         batch_size = min(opt.batch_size, len(dataset))
+        shuffle = True
         opt.dataloader = SuffleLoader(dataset,
                       batch_size=batch_size,
-                      shuffle=False,
+                      shuffle=shuffle,
                       num_workers=4,
-                      sampler=None,
+                      sampler=SuffleDist_Sample(dataset, shuffle=shuffle),
                       pin_memory=True,
                       collate_fn=LoadImagesAndLabels.collate_fn)
         opt.dataloader.shuffle_index()
 
         for opt.weights in weight_list:
-            opt.device = select_device(opt.device, batch_size=opt.batch_size)
+            opt.device = device
             # Directories
             if 'weights' in opt.weights.split('/'):
                 weight_file_name = '_'.join(opt.weights.split('/')[-4:-2]) + '_'
@@ -163,7 +173,7 @@ def main(opt):
                     opt.compute_loss = eval(opt.compute_loss)(opt.model, logger=opt.logger)
 
             # run normally
-
+            opt.model = DDP(opt.model, device_ids=[local_rank], output_device=local_rank)
             results, maps,times = val(**vars(opt))
             msg = 'task{task}:   Loss({loss})\n' \
                   'Detect: P({p:.3f})  R({r:.3f})  mAP@0.5({map50:.3f})  mAP@0.5:0.95({map:.3f})\n' \
@@ -183,4 +193,6 @@ if __name__ == "__main__":
     main(opt)
 
 
+#python -m torch.distributed.launch --nproc_per_node=$GPUS --master_port=$PORT  $(dirname "$0")/train.py $CONFIG  ${@:3}
 
+# python -m torch.distributed.launch --nproc_per_node=8  tasks/val_mp.py --opt-file opt_zjdetunet_drone.yaml

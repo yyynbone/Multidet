@@ -29,9 +29,12 @@ train:
 
   rect: False
   augment: True
-  label: True
+  label: # True
+    pad: 0.0
+    stride: 32
   transform:
     resize:
+      pad: False
     adapt_pad:
       auto: False
       scaleup: True
@@ -50,10 +53,14 @@ train:
       p_ud: 0.0  # image flip up-down (probability)
       p_lr: 0.5  # image flip left-right (probability)
 val:
-  label: True
+  label:
+    pad: 0.5
+    stride: 32
   rect: False
   augment: False
   transform:
     resize:
+      pad: True
     adapt_pad:
       auto: False
+      scaleup: False  #

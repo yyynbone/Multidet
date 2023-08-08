@@ -107,12 +107,11 @@ class TaskAlignedAssigner(nn.Module):
 
         # get in_gts mask, (b, max_num_obj, h*w)
         mask_in_gts = select_candidates_in_gts(anc_points, gt_bboxes)
-        # print("allo, reserved select_candidates_in_gts", torch.cuda.memory_allocated() / 1E9, torch.cuda.memory_reserved() / 1E9)
+
         # get topk_metric mask, (b, max_num_obj, h*w)
         mask_topk = self.select_topk_candidates(align_metric * mask_in_gts,
                                                 topk_mask=mask_gt.repeat([1, 1, self.topk]).bool())
-        # print("allo, reserved select_topk_candidates", torch.cuda.memory_allocated() / 1E9,
-        #       torch.cuda.memory_reserved() / 1E9)
+        
         # merge all mask to a final mask, (b, max_num_obj, h*w)
         mask_pos = mask_topk * mask_in_gts * mask_gt
 
@@ -124,8 +123,8 @@ class TaskAlignedAssigner(nn.Module):
         ind[1] = gt_labels.long().squeeze(-1)  # b, max_num_obj
         # get the scores of each grid for each gt cls
         bbox_scores = pd_scores[ind[0], :, ind[1]]  # b, max_num_obj, h*w
-
-        overlaps = bbox_iou(gt_bboxes.unsqueeze(2).T, pd_bboxes.unsqueeze(1), x1y1x2y2=False, CIoU=True)
+        torch.cuda.empty_cache()
+        overlaps = bbox_iou(gt_bboxes.unsqueeze(2).T, pd_bboxes.unsqueeze(1), x1y1x2y2=True, CIoU=True)
         overlaps = overlaps.T.clamp(0)
         align_metric = bbox_scores.pow(self.alpha) * overlaps.pow(self.beta)
         return align_metric, overlaps
@@ -146,12 +145,30 @@ class TaskAlignedAssigner(nn.Module):
         topk_idxs = torch.where(topk_mask, topk_idxs, 0)
         # (b, max_num_obj, topk, h*w) -> (b, max_num_obj, h*w)
         # print("allo, reserved", torch.cuda.memory_allocated() / 1E9, torch.cuda.memory_reserved() / 1E9) #2.25G, 4.97G
+        # 无用
+        # topk_metrics, topk_mask = 0, 0
+        # del topk_metrics, topk_mask
         torch.cuda.empty_cache()
         # print("allo, reserved after empty_cache", torch.cuda.memory_allocated() / 1E9, torch.cuda.memory_reserved() / 1E9)  # 2.25G, 4.97G
-        is_in_topk = F.one_hot(topk_idxs, num_anchors).sum(-2)  # 可见此处，显著增加了torch.cuda.memory_reserved()
+        # is_in_topk = F.one_hot(topk_idxs, num_anchors).sum(-2)  # 可见此处，显著增加了torch.cuda.memory_reserved()
+        # 此处，one_hot计算很占内存， sum 也是，代码在一块的话， Tried to allocate 是相加的，故更改为：
+        # is_in_topk = F.one_hot(topk_idxs, num_anchors)
+        # is_in_topk = is_in_topk.sum(-2)
+        # 还是不够，主要one_hot((bs, 87, 10), h*w=480*270) 太占内存
+        # bs, c, _ = topk_idxs.size()
+        # is_in_topk =  torch.zeros((bs, c, num_anchors)).to(topk_idxs.device).long()
+        # for i in range(bs):
+        #     for j in range(c):
+        #         is_in_topk[i,j] = torch.bincount(topk_idxs[i,j], minlength=num_anchors)
+        #         # is_in_topk = F.one_hot(topk_idxs, num_anchors).sum(-2)
+        bs, c, _ = topk_idxs.size()
+        is_in_topk =  torch.zeros((bs, c, num_anchors)).to(topk_idxs.device).long()
+        for i in range(bs):
+            is_in_topk[i] = F.one_hot(topk_idxs[i], num_anchors).sum(-2)
         # import sys
         # print(torch.cuda.memory_stats())  #OrderedDict([('active.all.allocated', 36939), ('active.all.current', 773),...])
         # print("allo, reserved is_in_topk", torch.cuda.memory_allocated() / 1E9, torch.cuda.memory_reserved() / 1E9, sys.getsizeof(is_in_topk.storage())/1E9)  #2.54G, 7.87G, 0.29G
+
         torch.cuda.empty_cache()
         # print("allo, reserved after empty_cache", torch.cuda.memory_allocated() / 1E9,
         #       torch.cuda.memory_reserved() / 1E9)  # 2.25G, 4.97G

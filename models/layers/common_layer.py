@@ -34,24 +34,6 @@ class DepthSepConv(nn.Module):
         y = self.dw_sp(x)
         return y
 
-# -------------------------------------------------------------------------
-# SE-Net Adaptive avg pooling --> fc --> fc --> Sigmoid
-class SeBlock(nn.Module):
-    def __init__(self, in_channel, reduction=4):
-        super().__init__()
-        self.Squeeze = nn.AdaptiveAvgPool2d(1)
-
-        self.Excitation = nn.Sequential()
-        self.Excitation.add_module('FC1', nn.Conv2d(in_channel, in_channel // reduction, kernel_size=1))  # 1*1卷积与此效果相同
-        self.Excitation.add_module('ReLU', nn.ReLU())
-        self.Excitation.add_module('FC2', nn.Conv2d(in_channel // reduction, in_channel, kernel_size=1))
-        self.Excitation.add_module('Sigmoid', nn.Sigmoid())
-
-    def forward(self, x):
-        y = self.Squeeze(x)
-        ouput = self.Excitation(y)
-        return x*(ouput.expand_as(x))
-
 # class Conv(nn.Module):
 #     # Standard convolution with args(ch_in, ch_out, kernel, stride, padding, groups, dilation, activation)
 #     # if defined here, it means in each Conv ,  the memory id of act is the same, which means id(self.act)=id(self.default_act)=constant

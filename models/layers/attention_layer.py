@@ -1,7 +1,45 @@
 import torch
 import torch.nn as nn
 from models.layers.common_layer import Bottleneck
-from models.layers.yolo_layer import C3
+
+
+# -------------------------------------------------------------------------
+# SE-Net Adaptive avg pooling --> fc --> fc --> Sigmoid
+class SeBlock(nn.Module):
+    def __init__(self, in_channel, reduction=4):
+        super().__init__()
+        self.Squeeze = nn.AdaptiveAvgPool2d(1)
+
+        self.Excitation = nn.Sequential()
+        self.Excitation.add_module('FC1', nn.Conv2d(in_channel, in_channel // reduction, kernel_size=1))  # 1*1卷积与此效果相同
+        self.Excitation.add_module('ReLU', nn.ReLU())
+        self.Excitation.add_module('FC2', nn.Conv2d(in_channel // reduction, in_channel, kernel_size=1))
+        self.Excitation.add_module('Sigmoid', nn.Sigmoid())
+
+    def forward(self, x):
+        y = self.Squeeze(x)
+        ouput = self.Excitation(y)
+        return x*(ouput.expand_as(x))
+
+
+class AtConv1d(nn.Module):
+    def __init__(self, k=3):
+        super().__init__()
+        self.a = nn.Conv1d(1, 1, kernel_size=k, padding=(k-1)//2)
+    def forward(self,x):
+        y = x.squeeze(-1).permute(0,2,1)
+        y = self.a(y).permute(0,2,1).unsqueeze(-1) #bs,c,1,1
+        return x*y
+
+class Atfc(nn.Module):
+    def __init__(self, c):
+        super().__init__()
+        self.a = nn.Linear(c,c)
+        self.c = c
+    def forward(self,x):
+        y = x.view(-1, self.c)
+        y = self.a(y).view(-1, self.c, 1, 1)
+        return x*y
 # -------------------------------------------------------------------------
 # CBAM https://arxiv.org/pdf/1807.06521.pdf
 class ChannelAttention(nn.Module):
@@ -54,12 +92,6 @@ class CBAMBottleneck(Bottleneck):
         y = self.cv2(self.cv1(x))
         at = self.attention(y)
         return x + at if self.add else at
-
-class C3CBAM(C3):
-    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
-        super().__init__(c1, c2, n, shortcut, g, e)
-        c_ = int(c2 * e)  # hidden channels
-        self.m =  nn.Sequential(*(Bottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)))
 
 
 
@@ -118,3 +150,4 @@ class CoordAtt(nn.Module):
         out = identity * a_w * a_h
 
         return out
+

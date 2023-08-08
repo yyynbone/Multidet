@@ -2,7 +2,7 @@
 # if __name__ == '__main__':
 #     csv_file = '../results/train/merge_scls/yolo_classify/exp/result.csv'
 #     plot_results(csv_file)
-
+import os
 from loss import CrossEntropyLoss, binary_cross_entropy
 import torch
 from torch import nn
@@ -96,6 +96,31 @@ def dist_barrier(rank, i):
         #     dist.barrier(device_ids=[0])
 
 
+# def compare():
+#     path = '/home/workspace/zjdet/results/val/drone_val/exp3/pretrained_yolov8s_visdrone_best'
+#     with open(path+'/all_img.txt', 'r') as f:
+#         img_txt = [x for x in f.read().strip().splitlines() if len(x)]
+#     for img in set(img_txt):
+#         i = 0
+#         for ig in img_txt:
+#             if img == ig:
+#                 i+=1
+#         if i>1:
+#             print(img, 'count', i)
+#     exit()
+#     # assert len(img_txt) == len(set(img_txt)), 'dumplicated'
+#
+#     label_txt = []
+#     for l in os.listdir(path+'/labels'):
+#         stem = l.split('.')[0]
+#         label_txt.append(stem)
+#
+#     for i in img_txt:
+#         if i not in label_txt:
+#             print(i)
+
+
+
 if __name__ == '__main__':
     # loss_f = CrossEntropyLoss(use_sigmoid=True)
     # pred  = torch.tensor([[0.9],[0.1],[0.1], [0.9],[0.1],[0.1]])
@@ -165,11 +190,15 @@ if __name__ == '__main__':
     # result['img'] = cv2.imread(result['filename'])
     # mask_label(result)
 
+    # compare()
 
     mp.spawn(dist_test,
              args=(),
              nprocs=8,
              join=True)
+
+
+
 
 
 
