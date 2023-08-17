@@ -10,6 +10,20 @@ import torchvision
 from utils.plots import plot_pr_curve, plot_confusionmatrics, print_log, plot_mc_curve
 from utils.cal_coco import select_score_from_json, visual_return
 def bbox_iou(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False, eps=1e-7):
+    """
+    calculate from cuda to cpu, in order to resolve the error of cuda out of memory in line 39, in bbox_iou
+    cw = torch.max(b1_x2, b2_x2) - torch.min(b1_x1, b2_x1)  # convex (smallest enclosing box) width
+    :param box1:
+    :param box2:
+    :param x1y1x2y2:
+    :param GIoU:
+    :param DIoU:
+    :param CIoU:
+    :param eps:
+    :return:
+    """
+    # device = box1.device
+    box1 = box1
     # Returns the IoU of box1 to box2. box1 is 4, box2 is nx4
     box2 = box2.T
 
@@ -33,6 +47,8 @@ def bbox_iou(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False, eps=
     union = w1 * h1 + w2 * h2 - inter + eps
 
     iou = inter / union
+    del inter, box1, box2
+
     if GIoU or DIoU or CIoU:
         cw = torch.max(b1_x2, b2_x2) - torch.min(b1_x1, b2_x1)  # convex (smallest enclosing box) width
         ch = torch.max(b1_y2, b2_y2) - torch.min(b1_y1, b2_y1)  # convex height
@@ -49,6 +65,7 @@ def bbox_iou(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False, eps=
                 return iou - (rho2 / c2 + v * alpha)  # CIoU
         else:  # GIoU https://arxiv.org/pdf/1902.09630.pdf
             c_area = cw * ch + eps  # convex area
+            del cw, ch
             return iou - (c_area - union) / c_area  # GIoU
     else:
         return iou  # IoU

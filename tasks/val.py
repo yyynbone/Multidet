@@ -29,7 +29,7 @@ def parse_opt():
     parser.add_argument('--conf-thres', type=float, default=0.001, help='confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.6, help='NMS IoU threshold')
     parser.add_argument('--task', default='val', help='train, val, test, speed or study')
-    parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--device', default='5', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--single-cls', action='store_true', help='treat as single-class dataset')
     parser.add_argument('--augment', action='store_true', help='augmented inference')
     parser.add_argument('--verbose', action='store_true', help='report mAP by class')
@@ -129,9 +129,10 @@ def main(opt):
                       pin_memory=True,
                       collate_fn=LoadImagesAndLabels.collate_fn)
         opt.dataloader.shuffle_index()
-
+        
+        opt.device = select_device(opt.device, batch_size=opt.batch_size)
+        
         for opt.weights in weight_list:
-            opt.device = select_device(opt.device, batch_size=opt.batch_size)
             # Directories
             if 'weights' in opt.weights.split('/'):
                 weight_file_name = '_'.join(opt.weights.split('/')[-4:-2]) + '_'
@@ -175,7 +176,7 @@ def main(opt):
 
     print_log('validate done', opt.logger)
 
-    torch.cuda.empty_cache()
+    # torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":

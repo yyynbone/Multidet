@@ -22,10 +22,10 @@ def init_seeds(seed=0):
     torch.manual_seed(seed)
     cudnn.benchmark, cudnn.deterministic = (False, True) if seed == 0 else (True, False)
 
-def time_sync():
+def time_sync(device=torch.device('cuda:0')):
     # pytorch-accurate time
     if torch.cuda.is_available():
-        torch.cuda.synchronize()
+        torch.cuda.synchronize(device)
     return time.time()
 
 @contextmanager
@@ -203,6 +203,8 @@ def select_device(device='', batch_size=None, newline=True, logger=None, rank=-1
         for i, d in enumerate(devices):
             p = torch.cuda.get_device_properties(i)
             s += f"{'' if i == 0 else space}CUDA:{d} ({p.name}, {p.total_memory / 1024 ** 2:.0f}MiB)\n"  # bytes to MB
+
+        device = f'cuda:{devices[0]}'
     else:
         s += 'CPU\n'
 
@@ -211,7 +213,8 @@ def select_device(device='', batch_size=None, newline=True, logger=None, rank=-1
         s = s.rstrip()
     if rank in [-1.0]:
         print_log(s, logger)
-    return torch.device('cuda:0' if cuda else 'cpu')
+    # return torch.device('cuda:0' if cuda else 'cpu')
+    return torch.device(device)
     # return  devices
 
 def cal_flops(model,img_size,verbose=False):

@@ -180,9 +180,11 @@ class LossV5:
         if isinstance(targets, (list, tuple)):
             class_label, targets, seg_img = targets
         device = targets.device
-        lcls, lbox, lobj = torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device)
+        loss = torch.zeros(3, device=self.device)  # box, obj, cls
+        origin_loss = loss.detach()
         llcls, llbox, llobj = [], [], []
         cls_ls, iou_ls = torch.zeros(1, device=device), torch.zeros(1, device=device)
+        bs = p.shape[0]  # batch size
         if self.det_loss:
             tcls, tbox, indices, anchors = build_targets(p, targets, self.anchors, self.hyp['anchor_t'],)  # targets
             # Losses
@@ -242,17 +244,19 @@ class LossV5:
                 self.obj_balance = [x / self.obj_balance[self.ssi] for x in self.obj_balance]
 
             # print(llcls, llbox, llobj)
+            loss[0] = sum([l * w for l, w in zip(llbox, self.box_balance)]) #
+            loss[1] = sum(llobj)  # score
+            loss[2] = sum([l * w for l, w in zip(llcls, self.cls_balance)]) # class # is a constant not an array
+            origin_loss = loss.clone().detach()
+            loss[0] *= self.hyp['box']  # box gain
+            loss[1] *= self.hyp['obj']  # obj gain
+            loss[2] *= self.hyp['cls']  # cls gain
 
-            lbox[0] = sum([l*w for l, w in zip(llbox, self.box_balance)]) * self.hyp['box']  #
-            lobj[0] = sum(llobj) * self.hyp['obj'] # score
-            lcls[0] = sum([l*w for l, w in zip(llcls, self.cls_balance)])* self.hyp['cls'] # class # is a constant not an array
+            # loss[0] = sum([l*w for l, w in zip(llbox, self.box_balance)]) * self.hyp['box']  #
+            # loss[1] = sum(llobj) * self.hyp['obj'] # score
+            # loss[2] = sum([l*w for l, w in zip(llcls, self.cls_balance)])* self.hyp['cls'] # class # is a constant not an array
             # print(lbox, lobj, lcls)
-            bs = tobj.shape[0]  # batch size
-            # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>  modify
-        else:
-            bs = p.shape[0]
-        return (lbox + lobj + lcls) * bs, torch.cat((lbox, lobj, lcls)).detach()
-
+        return loss.sum() * bs, origin_loss  # loss(box, obj, cls)
 
 class BboxLoss(nn.Module):
 
@@ -377,11 +381,12 @@ class LossV8:
             loss[0], loss[2] = self.bbox_loss(pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores,
                                               target_scores_sum, fg_mask)
 
+        origin_loss = loss.clone().detach()
         loss[0] *= self.hyp['box']  # box gain
         loss[1] *= self.hyp['cls']  # cls gain
         loss[2] *= self.hyp['dfl']  # dfl gain
 
-        return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
+        return loss.sum() * batch_size, origin_loss  # loss(box, cls, dfl)
 
 # Criterion class for computing training losses
 class LossV8seg:
@@ -498,15 +503,15 @@ class LossV8seg:
                         mxyxy = xyxyn * torch.tensor([mask_w, mask_h, mask_w, mask_h], device=self.device)
                         loss[3] += self.single_mask_loss(gt_mask, pred_masks[i][fg_mask[i]], proto[i], mxyxy,
                                                          marea)  # seg loss
-
+        origin_loss = loss.clone().detach()
         loss[0] *= self.hyp['box']  # box gain
         loss[1] *= self.hyp['cls']  # cls gain
         loss[2] *= self.hyp['dfl']  # dfl gain
 
         if pred_masks is not None:
-            loss[3] *= self.hyp.box / batch_size  # seg gain
+            loss[3] *= self.hyp['box'] / batch_size  # seg gain
 
-        return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
+        return loss.sum() * batch_size, origin_loss  # loss(box, cls, dfl)
     
     def single_mask_loss(self, gt_mask, pred, proto, xyxy, area):
         # Mask loss for one image

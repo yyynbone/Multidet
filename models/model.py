@@ -410,7 +410,7 @@ if __name__ == '__main__':
     FILE = Path(__file__).resolve()
     ROOT = FILE.parents[1]
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/conv_fc.yaml', help='model.yaml')
+    parser.add_argument('--cfg', type=str, default=ROOT/'configs/model/zjdet_u.yaml', help='model.yaml')
     parser.add_argument('--device', default='0', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--profile', default=True, help='profile model speed')
     parser.add_argument('--test', action='store_true', help='test all yolo*.yaml')
@@ -421,7 +421,7 @@ if __name__ == '__main__':
     device = select_device(opt.device)
     ch_in = 3
     nc = 4
-    input_shape = (ch_in, 540, 960)
+    input_shape = (ch_in, 640, 640)
     # Create model
     if check_yaml(opt.cfg):
         model = Model(opt.cfg, ch=ch_in, nc=nc, imgsz=(640, 640)).to(device)

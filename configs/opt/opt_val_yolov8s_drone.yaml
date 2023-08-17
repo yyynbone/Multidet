@@ -1,6 +1,6 @@
 weights:
-  - ../ultralytics/state_dict/pretrained_yolov8s_visdrone_best.pt
-  - results/train/drone/yolov8s/exp/weights/best.pt
+#  - ../ultralytics/state_dict/pretrained_yolov8s_visdrone_best.pt
+#  - results/train/drone/yolov8s/exp/weights/best.pt
   - results/train/drone/yolov8s/exp2/weights/best.pt
 cfg: yolov8s.yaml
 data: drone_val.yaml
@@ -21,4 +21,4 @@ div_area:
 - 20
 - 50
 compute_loss: LossV8
-val_sample_portion: 0.1
+# val_sample_portion: 0.1

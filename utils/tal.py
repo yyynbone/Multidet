@@ -76,9 +76,9 @@ class TaskAlignedAssigner(nn.Module):
         """
         self.bs = pd_scores.size(0)
         self.n_max_boxes = gt_bboxes.size(1)
-
+        
+        device = gt_bboxes.device
         if self.n_max_boxes == 0:
-            device = gt_bboxes.device
             return (torch.full_like(pd_scores[..., 0], self.bg_idx).to(device), torch.zeros_like(pd_bboxes).to(device),
                     torch.zeros_like(pd_scores).to(device), torch.zeros_like(pd_scores[..., 0]).to(device),
                     torch.zeros_like(pd_scores[..., 0]).to(device))
@@ -104,7 +104,7 @@ class TaskAlignedAssigner(nn.Module):
         # get anchor_align metric, (b, max_num_obj, h*w)
 
         align_metric, overlaps = self.get_box_metrics(pd_scores, pd_bboxes, gt_labels, gt_bboxes)  #(bs, gt_n, pred_num=feature_map_y*x)
-
+        # torch.cuda.empty_cache()
         # get in_gts mask, (b, max_num_obj, h*w)
         mask_in_gts = select_candidates_in_gts(anc_points, gt_bboxes)
 
@@ -123,7 +123,7 @@ class TaskAlignedAssigner(nn.Module):
         ind[1] = gt_labels.long().squeeze(-1)  # b, max_num_obj
         # get the scores of each grid for each gt cls
         bbox_scores = pd_scores[ind[0], :, ind[1]]  # b, max_num_obj, h*w
-        torch.cuda.empty_cache()
+        #  torch.cuda.empty_cache()
         overlaps = bbox_iou(gt_bboxes.unsqueeze(2).T, pd_bboxes.unsqueeze(1), x1y1x2y2=True, CIoU=True)
         overlaps = overlaps.T.clamp(0)
         align_metric = bbox_scores.pow(self.alpha) * overlaps.pow(self.beta)
@@ -148,7 +148,7 @@ class TaskAlignedAssigner(nn.Module):
         # 无用
         # topk_metrics, topk_mask = 0, 0
         # del topk_metrics, topk_mask
-        torch.cuda.empty_cache()
+        # torch.cuda.empty_cache()
         # print("allo, reserved after empty_cache", torch.cuda.memory_allocated() / 1E9, torch.cuda.memory_reserved() / 1E9)  # 2.25G, 4.97G
         # is_in_topk = F.one_hot(topk_idxs, num_anchors).sum(-2)  # 可见此处，显著增加了torch.cuda.memory_reserved()
         # 此处，one_hot计算很占内存， sum 也是，代码在一块的话， Tried to allocate 是相加的，故更改为：
@@ -169,7 +169,7 @@ class TaskAlignedAssigner(nn.Module):
         # print(torch.cuda.memory_stats())  #OrderedDict([('active.all.allocated', 36939), ('active.all.current', 773),...])
         # print("allo, reserved is_in_topk", torch.cuda.memory_allocated() / 1E9, torch.cuda.memory_reserved() / 1E9, sys.getsizeof(is_in_topk.storage())/1E9)  #2.54G, 7.87G, 0.29G
 
-        torch.cuda.empty_cache()
+        # torch.cuda.empty_cache()
         # print("allo, reserved after empty_cache", torch.cuda.memory_allocated() / 1E9,
         #       torch.cuda.memory_reserved() / 1E9)  # 2.25G, 4.97G
         # filter invalid bboxes
@@ -196,7 +196,7 @@ class TaskAlignedAssigner(nn.Module):
         # assigned target scores
         target_labels.clamp(0)
         target_scores = F.one_hot(target_labels, self.num_classes)  # (b, h*w, 80)
-        torch.cuda.empty_cache()
+        # torch.cuda.empty_cache()
         fg_scores_mask = fg_mask[:, :, None].repeat(1, 1, self.num_classes)  # (b, h*w, 80)
         target_scores = torch.where(fg_scores_mask > 0, target_scores, 0)
 

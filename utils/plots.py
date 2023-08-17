@@ -433,15 +433,16 @@ def plot_results(file='path/to/results.csv', save_name='results.png',dir=''):
     for fi, f in enumerate(files):
         try:
             data = pd.read_csv(f)
-            s = [x.strip()  if 'lr2' not in x else 'bais_l_r' for x in data.columns]
+            s = [x.strip() if ('lr2' not in x and 'pg0' not in x) else 'bais_l_r' for x in data.columns]
             x = data.values[:, 0]
             if 'seg' not in save_name:
                 new_title = set([title.split('/')[-1]  if 'lr' not in title else 'lr' for title in s[1:]])
+
                 fig, ax = plt.subplots(3, make_divide(len(new_title), 3), figsize=(24, 16), tight_layout=True)
             else:
                 new_title = set([title.split('/')[-1] for title in s[1:] if 'seg' in title].sort())
                 fig, ax = plt.subplots(2, make_divide(len(new_title), 2), figsize=(12, 8), tight_layout=True)
-
+            print(new_title)
             ax = ax.ravel()
             for i,now_title in enumerate(new_title):
                 for j in range(1, len(s)):
@@ -450,8 +451,10 @@ def plot_results(file='path/to/results.csv', save_name='results.png',dir=''):
                     y = y.astype(np.float64)
                     # y = np.where(y==np.inf, -0.1, y)
                     if now_title=='lr':
-                        if now_title in s_p[-1]:
-                            label = s_p[-1]
+                        # if now_title in s_p[-1]:
+                        #     label = s_p[-1]
+                        if now_title in s[j]:
+                            label = s[j]
                             ax[i].plot(x, y, marker='.', label=label, linewidth=2, markersize=8)  # f.stem = 'results'
                             ax[i].set_title(now_title, fontsize=12)
                             ax[i].legend(loc=1)
@@ -689,3 +692,6 @@ def save_object(ims, targets, preds_float, paths=None, save_dir='exp', visual_ta
                 if len(f_map[i].shape)==3:
                     map_visualization(f_map[i].sigmoid(), f_path=f_path)
 
+# if __name__ == '__main__':
+#     save_dir = '/home/workspace/ultralytics/runs/detect/train2'
+#     plot_results(file=Path(save_dir) / 'results.csv', save_name='results_re.png')  # save results.png

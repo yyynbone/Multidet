@@ -285,12 +285,12 @@ class LoadImagesAndLabels(Dataset):
         self.use_label = pre_process.get('label', False)
         self.pre_process = pre_process
 
+
         with torch_distributed_zero_first(local_rank):
+            self.indices = np.arange(len(self.results))
+            self.calcu_label()
             if local_rank in [-1, 0]:
                 self.crop2small()
-            self.calcu_label()
-
-
 
     def calcu_label(self):
         if self.use_label:
@@ -302,7 +302,7 @@ class LoadImagesAndLabels(Dataset):
             self.obj_index = np.where(label_num > 0)[0]
             self.bkg_index = np.where(label_num == 0)[0]
             if self.pre_process['rect']:
-                rect_shape(self.results, self.imgsz, self.batch_size,  **self.pre_process['label'])
+                rect_shape(self.results[self.indices], self.imgsz, self.batch_size,  **self.pre_process['label'])
                 # 这是根据固定[0,1,2...]这个index计算每个批次图片的最佳shape, index shuffle 变化后，会报错，需要重新计算
 
     def rm_result_img(self):
@@ -422,7 +422,7 @@ class LoadImagesAndLabels(Dataset):
         # random.shuffle(self.indices) # 其实这里不需要shuffle(), DistributedSampler 里已经有shuffle
         # print(f'shuffle down, indices length {len(self)} in {self.rank} and indices same {self.indices[:5]}') # indices 相同
         # print_log(f'now we shuffle and now dataset length is {len(self)}', self.logger)
-        
+        self.calcu_label()
 
     def __len__(self):
         return len(self.indices)
@@ -485,7 +485,7 @@ class LoadImagesAndLabels(Dataset):
         segs = None if None in segs else torch.stack(segs, 0)
 
         col_target = [class_labels, im_labels, segs]
-        return torch.stack(imgs, 0), col_target, paths# , shapes
+        return torch.stack(imgs, 0), col_target, paths # , shapes
 
 class LoadImages(LoadImagesAndLabels):
     def __init__(self, path, img_size=640, stride=32, auto=True, is_bgr=True, slide_crop=None, resize=None):

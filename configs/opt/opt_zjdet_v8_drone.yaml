@@ -18,7 +18,8 @@ div_area:
 - 15
 epochs: 1000
 rect: false
-world_size: 8
+device: 0,1,2,3
+world_size: 4
 loss: LossV5
 loss_supervision: 50
 patience: 500

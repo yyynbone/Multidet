@@ -28,5 +28,5 @@ clahe: 0.0
 
 
 box: 7.5 #0.01 # box loss gain
-cls: 0.5  #5 # cls loss gain
+cls: 0.5 # 0.5  #5 # cls loss gain
 dfl: 1.5  # 1 df1 loss gain (scale with pixels)

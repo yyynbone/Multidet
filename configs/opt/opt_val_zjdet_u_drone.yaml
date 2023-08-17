@@ -1,0 +1,23 @@
+weights:
+  - results/train/drone/zjdet_unet/exp3/weights/best.pt
+  - results/train/drone/zjdet_u/exp/weights/best.pt
+data: drone.yaml
+data_prefile: data_preprocess.yaml
+batch_size: 8 # for 640*640 64
+bgr: 1
+last_conf: [0.1]
+verbose: True
+visual_matched: True
+save_txt: True
+save_conf: True
+save_json: True
+imgsz: [270, 480]
+iof_nms: False
+iouv: [0.5, 0.95]
+div_area:
+- 2
+- 10
+- 20
+- 50
+compute_loss: LossV8
+# val_sample_portion: 0.1
