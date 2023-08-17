@@ -3,7 +3,7 @@ cfg: yolov8s.yaml
 data: drone.yaml
 data_prefile: data_preprocess.yaml
 hyp: hyp_v8.yaml
-batch_size: 256 # for 640*640 64
+batch_size: 128 # for 640*640 64
 bgr: 1
 conf_thresh: 0.1
 last_conf: 0.3
